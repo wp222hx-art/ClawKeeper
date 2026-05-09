@@ -9,6 +9,7 @@ import { agent_runtime } from './agents/index';
 import { flush_opik } from './core/observability';
 import { ipo_orchestration_service } from './ipo/orchestration/ipo_orchestration_service';
 import { ALL_IPO_AGENTS, IPO_AGENT_COUNT } from './ipo/orchestration/agent_registry';
+import { llm_provider_registry } from './ipo/llm/registry';
 
 console.log('');
 console.log('═'.repeat(60));
@@ -58,7 +59,16 @@ console.log(
   `[IPOPilot] Skill coverage: AGENT.md ${_coverage.agents_with_agent_md}/${_coverage.total_agents}, ` +
   `SKILL.md ${_coverage.skills_with_content}/${_coverage.unique_skills}`
 );
-console.log('[IPOPilot] AI provider: NOT CONFIGURED (Phase 2 — agents idle)');
+// Bootstrap LLM provider registry from environment variables.
+const _llm_boot = llm_provider_registry.bootstrap_from_env();
+if (_llm_boot.registered.length === 0) {
+  console.log('[IPOPilot] AI provider: NOT CONFIGURED — set IPO_TOKENHOT_API_KEY (or OPENAI/ANTHROPIC/DEEPSEEK) to enable agents');
+} else {
+  console.log(
+    `[IPOPilot] AI providers configured: ${_llm_boot.registered.join(', ')} ` +
+    `(default: ${_llm_boot.default_provider ?? 'none'})`
+  );
+}
 void ALL_IPO_AGENTS; // keep import live for tree-shaking awareness
 
 // Start API server
