@@ -5,7 +5,8 @@
 import { v4 as uuid } from 'uuid';
 import { agent_runtime } from './index';
 import * as llm from '../core/llm-client';
-import type { LedgerTaskStar, LedgerCapability, LedgerAgentId, TenantContext } from '../core/types';
+import type { LedgerTaskStar, LedgerCapability, LedgerAgentId } from '../core/types';
+import type { TenantContext } from './base';
 
 // ============================================================================
 // Types
@@ -21,7 +22,7 @@ export interface OrchestrationTask {
   dependencies: string[];
   status: 'pending' | 'running' | 'completed' | 'failed' | 'skipped';
   result?: Record<string, unknown>;
-  error?: string;
+  error?: string | null;
   started_at?: string;
   completed_at?: string;
   duration_ms?: number;
