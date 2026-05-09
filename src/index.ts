@@ -51,6 +51,13 @@ for (const [tier, count] of Object.entries(tier_counts)) {
   console.log(`           - ${tier}: ${count}`);
 }
 console.log('[IPOPilot] Stage gates, workstream blueprints, and signoff rules: LOADED');
+
+// Skill / AGENT.md coverage report
+const _coverage = ipo_orchestration_service.get_skill_coverage();
+console.log(
+  `[IPOPilot] Skill coverage: AGENT.md ${_coverage.agents_with_agent_md}/${_coverage.total_agents}, ` +
+  `SKILL.md ${_coverage.skills_with_content}/${_coverage.unique_skills}`
+);
 console.log('[IPOPilot] AI provider: NOT CONFIGURED (Phase 2 — agents idle)');
 void ALL_IPO_AGENTS; // keep import live for tree-shaking awareness
 

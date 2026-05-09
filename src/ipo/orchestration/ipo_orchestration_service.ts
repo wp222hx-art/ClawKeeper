@@ -23,6 +23,12 @@ import {
   is_workstream_mandatory,
 } from './workstream_blueprint';
 import { get_ipo_agent, ALL_IPO_AGENTS } from './agent_registry';
+import {
+  load_agent_skill_bundle,
+  compute_skill_coverage,
+  type AgentSkillBundle,
+  type SkillCoverageReport,
+} from './skill_loader';
 import type {
   IpoProject,
   ProjectStage,
@@ -260,6 +266,29 @@ export class IpoOrchestrationService {
    */
   get_agent_profile(agent_id: string) {
     return get_ipo_agent(agent_id);
+  }
+
+  // -------------------------------------------------------------------------
+  // Skill / AGENT.md bundle access — lazy-loaded with mtime invalidation.
+  // The dashboard's "Agent Inspector" panel and (Phase 2) the LLM provider
+  // execution path both consume bundles via these methods.
+  // -------------------------------------------------------------------------
+
+  /**
+   * Load the AGENT.md + SKILL.md bundle for a single agent.
+   * Returns null when the agent id is unknown.
+   */
+  load_agent_bundle(agent_id: string): AgentSkillBundle | null {
+    return load_agent_skill_bundle(agent_id);
+  }
+
+  /**
+   * Compute coverage stats over all registered agents — how many have
+   * AGENT.md / SKILL.md files actually present on disk. Useful for the
+   * Settings > Agent Catalog page and CI gating.
+   */
+  get_skill_coverage(): SkillCoverageReport {
+    return compute_skill_coverage();
   }
 }
 
