@@ -13,6 +13,9 @@ import {
   Zap,
   Terminal,
   Sparkles,
+  Briefcase,
+  BookOpen,
+  Plug,
 } from 'lucide-react';
 import { use_auth_store } from '@/stores/auth-store';
 import { cn } from '@/lib/utils';
@@ -20,13 +23,21 @@ import { api } from '@/lib/api';
 
 const nav_sections = [
   {
+    title: 'IPOPilot',
+    items: [
+      { name: 'IPO Projects', path: '/ipo/projects', icon: Briefcase },
+      { name: 'Knowledge Base', path: '/ipo/knowledge', icon: BookOpen },
+      { name: 'IPO Agents', path: '/ipo/agents', icon: Bot },
+    ],
+  },
+  {
     title: 'Overview',
     items: [
       { name: 'Dashboard', path: '/dashboard', icon: LayoutDashboard },
     ],
   },
   {
-    title: 'Finance',
+    title: 'Finance (legacy)',
     items: [
       { name: 'Invoices', path: '/invoices', icon: FileText },
       { name: 'Reconciliation', path: '/reconciliation', icon: GitCompare },
@@ -41,7 +52,7 @@ const nav_sections = [
     ],
   },
   {
-    title: 'AI Agents',
+    title: 'AI Agents (legacy)',
     items: [
       { name: 'Command Center', path: '/agents/command-center', icon: Sparkles },
       { name: 'Agent Console', path: '/agents/console', icon: Terminal },
@@ -51,6 +62,7 @@ const nav_sections = [
   {
     title: 'System',
     items: [
+      { name: 'AI Providers', path: '/settings/ai-providers', icon: Plug },
       { name: 'Settings', path: '/settings', icon: Settings },
     ],
   },
@@ -80,8 +92,8 @@ export function Sidebar() {
             <span className="text-primary-foreground font-bold text-lg">🔐</span>
           </div>
           <div>
-            <h1 className="text-xl font-bold">ClawKeeper</h1>
-            <p className="text-xs text-muted-foreground">AI Bookkeeping</p>
+            <h1 className="text-xl font-bold">IPOPilot</h1>
+            <p className="text-xs text-muted-foreground">IPO Co-Pilot</p>
           </div>
         </div>
       </div>
