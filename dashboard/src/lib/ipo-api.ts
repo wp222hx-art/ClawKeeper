@@ -234,6 +234,40 @@ export interface AgentRunRequest {
   model?: string;
   temperature?: number;
   max_tokens?: number;
+  /** Listing jurisdiction (PFS Layer 1 — selects the format standard). */
+  target_market?: TargetMarket;
+  /** Section code, e.g. 'risk_factors', 'mdna' — see PFS_REGISTRY. */
+  prospectus_section?: string;
+}
+
+export interface PfsLintItem {
+  id: string;
+  label: string;
+  covered: boolean;
+  evidence?: string;
+}
+
+export interface PfsReport {
+  target_market: TargetMarket;
+  section_code: string;
+  statutory_anchor: string;
+  document_type: string;
+  required_subheadings: string[];
+  subheadings_present: string[];
+  subheadings_missing: string[];
+  required_elements_total: number;
+  required_elements_covered: number;
+  mandatory_disclosures_total: number;
+  mandatory_disclosures_covered: number;
+  word_count: number;
+  word_count_min?: number;
+  word_count_max?: number;
+  word_count_ok: boolean;
+  json_envelope_present: boolean;
+  parsed_envelope_gaps: string[];
+  parsed_envelope_checklist: PfsLintItem[];
+  lint_violations: string[];
+  compliance_score: number;
 }
 
 export interface AgentRunResult {
@@ -253,6 +287,7 @@ export interface AgentRunResult {
   warnings: string[];
   ms_elapsed: number;
   started_at: string;
+  pfs_report?: PfsReport;
 }
 
 // ---------------------------------------------------------------------------

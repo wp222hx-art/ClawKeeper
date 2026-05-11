@@ -87,6 +87,11 @@ export function create_ipo_agent_routes(_sql: _Sql<Record<string, unknown>>) {
         model:         typeof body.model === 'string' ? body.model : undefined,
         temperature:   typeof body.temperature === 'number' ? body.temperature : undefined,
         max_tokens:    typeof body.max_tokens === 'number' ? body.max_tokens : undefined,
+        // PFS injection — when the caller is drafting a prospectus section,
+        // these route the request through the jurisdiction-specific format
+        // standard (see src/ipo/prospectus/format_standards.ts).
+        target_market:      typeof body.target_market === 'string' ? body.target_market as AgentRunRequest['target_market'] : undefined,
+        prospectus_section: typeof body.prospectus_section === 'string' ? body.prospectus_section : undefined,
       });
       return c.json({ ok: true, result });
     } catch (e) {

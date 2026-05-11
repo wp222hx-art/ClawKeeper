@@ -26,6 +26,14 @@ import {
   type ChatMessage,
   type LlmProvider,
 } from '../llm/provider';
+import type { TargetMarket } from '../types';
+import {
+  get_jurisdiction_standard,
+  get_section_spec,
+  render_format_block,
+  type SectionFormatSpec,
+  type JurisdictionFormatStandard,
+} from '../prospectus/format_standards';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -40,6 +48,45 @@ export interface AgentRunRequest {
   model?: string;                       // Override default model
   temperature?: number;
   max_tokens?: number;
+  /**
+   * Prospectus Format Standards (PFS) injection.
+   * When both target_market and prospectus_section are provided, the runner
+   * looks up the matching SectionFormatSpec from the PFS registry and injects
+   * a "Format Standard (binding)" block into the agent's system_prompt so the
+   * resulting draft conforms to the listing-jurisdiction's format.
+   */
+  target_market?: TargetMarket;
+  prospectus_section?: string;
+}
+
+export interface PfsLintItem {
+  id: string;
+  label: string;
+  covered: boolean;
+  evidence?: string;
+}
+
+export interface PfsReport {
+  target_market: TargetMarket;
+  section_code: string;
+  statutory_anchor: string;
+  document_type: string;
+  required_subheadings: string[];
+  subheadings_present: string[];
+  subheadings_missing: string[];
+  required_elements_total: number;
+  required_elements_covered: number;
+  mandatory_disclosures_total: number;
+  mandatory_disclosures_covered: number;
+  word_count: number;
+  word_count_min?: number;
+  word_count_max?: number;
+  word_count_ok: boolean;
+  json_envelope_present: boolean;
+  parsed_envelope_gaps: string[];
+  parsed_envelope_checklist: PfsLintItem[];
+  lint_violations: string[];
+  compliance_score: number;             // 0-100, integer
 }
 
 export interface AgentRunResult {
@@ -63,6 +110,8 @@ export interface AgentRunResult {
   warnings: string[];                   // e.g. missing AGENT.md, no provider, etc.
   ms_elapsed: number;
   started_at: string;
+  /** PFS compliance report — only populated when target_market + prospectus_section were supplied. */
+  pfs_report?: PfsReport;
 }
 
 // ---------------------------------------------------------------------------
@@ -83,6 +132,7 @@ function build_system_prompt(
   agent: IpoAgentDefinition,
   locale: 'en' | 'zh',
   warnings: string[],
+  pfs?: { std: JurisdictionFormatStandard; spec: SectionFormatSpec },
 ): string {
   const bundle = load_agent_skill_bundle(agent.id);
   const sections: string[] = [];
@@ -160,11 +210,18 @@ function build_system_prompt(
     }
   }
 
-  // Output protocol
-  sections.push(locale === 'zh'
-    ? '## 输出协议\n请用中文作答。先给出 "结论"（要点列表），再给出 "依据"（引用 / 推理 / 计算细节），最后给出 "下一步"（建议的工作流动作）。如果信息不足以下结论，明确说明缺什么以及谁应当提供。'
-    : '## Output protocol\nReply in English. Begin with "Findings" (bulleted), then "Reasoning" (citations / derivations / calculations), then "Next Actions" (recommended workstream moves). If information is insufficient, state explicitly what is missing and who should supply it.',
-  );
+  // Prospectus Format Standards (PFS) — binding when target_market + section
+  // are supplied. This block goes LAST so its rules take precedence over the
+  // generic output protocol.
+  if (pfs) {
+    sections.push(render_format_block(pfs.std, pfs.spec, locale));
+  } else {
+    // Output protocol — only used when no PFS spec is provided.
+    sections.push(locale === 'zh'
+      ? '## 输出协议\n请用中文作答。先给出 "结论"（要点列表），再给出 "依据"（引用 / 推理 / 计算细节），最后给出 "下一步"（建议的工作流动作）。如果信息不足以下结论，明确说明缺什么以及谁应当提供。'
+      : '## Output protocol\nReply in English. Begin with "Findings" (bulleted), then "Reasoning" (citations / derivations / calculations), then "Next Actions" (recommended workstream moves). If information is insufficient, state explicitly what is missing and who should supply it.',
+    );
+  }
 
   return sections.join('\n\n');
 }
@@ -253,7 +310,23 @@ export class AgentRunner {
     }
 
     const warnings: string[] = [];
-    const system_prompt = build_system_prompt(agent, locale, warnings);
+
+    // Resolve PFS spec if both target_market + prospectus_section provided.
+    let pfs_pair: { std: JurisdictionFormatStandard; spec: SectionFormatSpec } | undefined;
+    if (req.target_market && req.prospectus_section) {
+      const std = get_jurisdiction_standard(req.target_market);
+      const spec = get_section_spec(req.target_market, req.prospectus_section);
+      if (std && spec) {
+        pfs_pair = { std, spec };
+      } else {
+        warnings.push(
+          `PFS: no format spec found for target_market=${req.target_market} ` +
+          `section=${req.prospectus_section}; falling back to generic protocol.`,
+        );
+      }
+    }
+
+    const system_prompt = build_system_prompt(agent, locale, warnings, pfs_pair);
 
     const user_msg_parts: string[] = [];
     if (req.context && req.context.trim().length > 0) {
@@ -270,6 +343,9 @@ export class AgentRunner {
     if (!this.registry.is_configured()) {
       warnings.push('No AI provider configured — returning dry-run output.');
       const out = synth_dry_run_output(agent, req.prompt, req.context, locale);
+      const dry_pfs_report = pfs_pair
+        ? lint_pfs_output(out, pfs_pair.std, pfs_pair.spec)
+        : undefined;
       return {
         agent_id:                agent.id,
         agent_display_name:      agent.display_name,
@@ -287,6 +363,7 @@ export class AgentRunner {
         warnings,
         ms_elapsed:              Date.now() - started,
         started_at,
+        pfs_report:              dry_pfs_report,
       };
     }
 
@@ -326,6 +403,8 @@ export class AgentRunner {
       throw new ProviderError(provider.code, null, (e as Error).message);
     }
 
+    const pfs_report = pfs_pair ? lint_pfs_output(resp.content, pfs_pair.std, pfs_pair.spec) : undefined;
+
     return {
       agent_id:              agent.id,
       agent_display_name:    agent.display_name,
@@ -343,8 +422,181 @@ export class AgentRunner {
       warnings,
       ms_elapsed:            Date.now() - started,
       started_at,
+      pfs_report,
     };
   }
+}
+
+// ---------------------------------------------------------------------------
+// PFS Compliance Linter — Layer 4
+// Validates the agent's Markdown + JSON output against the SectionFormatSpec
+// and returns a structured PfsReport. Never throws; degrades gracefully when
+// the JSON envelope is missing or malformed.
+// ---------------------------------------------------------------------------
+
+function strip_diacritics_lower(s: string): string {
+  return s.toLowerCase().normalize('NFKC');
+}
+
+function count_words(s: string): number {
+  if (!s) return 0;
+  // Mixed CJK + Latin: count CJK ideographs as 1 each + whitespace-delimited Latin words.
+  const cjk_matches = s.match(/[\u3400-\u9fff\uf900-\ufaff]/g);
+  const cjk_count = cjk_matches ? cjk_matches.length : 0;
+  const latin = s.replace(/[\u3400-\u9fff\uf900-\ufaff]/g, ' ');
+  const latin_words = latin.split(/\s+/).filter(w => /[A-Za-z0-9]/.test(w)).length;
+  return cjk_count + latin_words;
+}
+
+function find_first_json_block(output: string): string | null {
+  // Prefer fenced ```json ... ``` blocks
+  const fenced = output.match(/```json\s*([\s\S]*?)```/i);
+  if (fenced && fenced[1]) return fenced[1].trim();
+  // Fallback: greedy {...} that looks like our envelope
+  const idx = output.indexOf('"compliance_checklist"');
+  if (idx >= 0) {
+    let start = idx;
+    while (start > 0 && output[start] !== '{') start--;
+    let depth = 0;
+    for (let i = start; i < output.length; i++) {
+      if (output[i] === '{') depth++;
+      else if (output[i] === '}') {
+        depth--;
+        if (depth === 0) return output.slice(start, i + 1);
+      }
+    }
+  }
+  return null;
+}
+
+interface ParsedEnvelope {
+  meta?: { word_count?: number; locale?: string };
+  sections?: Array<{ heading?: string; body?: string; citations?: string[] }>;
+  compliance_checklist?: PfsLintItem[];
+  gaps?: string[];
+}
+
+function try_parse_envelope(output: string): ParsedEnvelope | null {
+  const block = find_first_json_block(output);
+  if (!block) return null;
+  try {
+    const parsed = JSON.parse(block);
+    if (parsed && typeof parsed === 'object') return parsed as ParsedEnvelope;
+  } catch {
+    // ignore — leniently return null
+  }
+  return null;
+}
+
+export function lint_pfs_output(
+  output: string,
+  std: JurisdictionFormatStandard,
+  spec: SectionFormatSpec,
+): PfsReport {
+  const lower = strip_diacritics_lower(output);
+  const violations: string[] = [];
+
+  // Subheading coverage — case-insensitive substring.
+  const present: string[] = [];
+  const missing: string[] = [];
+  for (const h of spec.output_schema.required_subheadings) {
+    if (lower.includes(strip_diacritics_lower(h))) present.push(h);
+    else missing.push(h);
+  }
+  if (missing.length > 0) {
+    violations.push(`Missing ${missing.length} required subheading(s): ${missing.slice(0, 5).join(' · ')}${missing.length > 5 ? ' …' : ''}`);
+  }
+
+  // Required-elements coverage — substring of the human-readable description after the colon
+  let elements_covered = 0;
+  for (const el of spec.required_elements) {
+    const colon = el.indexOf(':');
+    const phrase = colon >= 0 ? el.slice(colon + 1).trim() : el;
+    const tokens = phrase.toLowerCase().split(/[^a-z\u3400-\u9fff]+/).filter(Boolean).slice(0, 4);
+    if (tokens.length === 0) { elements_covered++; continue; }
+    const all_present = tokens.every(t => lower.includes(t));
+    if (all_present) elements_covered++;
+  }
+  if (elements_covered < spec.required_elements.length) {
+    violations.push(`Required elements covered: ${elements_covered}/${spec.required_elements.length}`);
+  }
+
+  // Mandatory disclosures — substring of first 6 words
+  let disclosures_covered = 0;
+  for (const d of spec.mandatory_disclosures) {
+    const head = d.toLowerCase().split(/\s+/).slice(0, 6).join(' ');
+    if (lower.includes(head)) disclosures_covered++;
+  }
+  if (disclosures_covered < spec.mandatory_disclosures.length) {
+    violations.push(`Mandatory disclosures covered: ${disclosures_covered}/${spec.mandatory_disclosures.length}`);
+  }
+
+  // JSON envelope
+  const envelope = try_parse_envelope(output);
+  const envelope_present = envelope !== null;
+  if (!envelope_present) violations.push('JSON envelope missing or unparseable.');
+
+  // Word count
+  const wc_from_envelope = envelope?.meta?.word_count;
+  const wc = typeof wc_from_envelope === 'number' && wc_from_envelope > 0
+    ? wc_from_envelope
+    : count_words(output);
+  let wc_ok = true;
+  if (spec.min_word_count && wc < spec.min_word_count) {
+    wc_ok = false;
+    violations.push(`Word count ${wc} below minimum ${spec.min_word_count}.`);
+  }
+  if (spec.max_word_count && wc > spec.max_word_count) {
+    wc_ok = false;
+    violations.push(`Word count ${wc} above maximum ${spec.max_word_count}.`);
+  }
+
+  // Weighted score
+  const sub_pct = spec.output_schema.required_subheadings.length === 0
+    ? 1
+    : present.length / spec.output_schema.required_subheadings.length;
+  const elem_pct = spec.required_elements.length === 0
+    ? 1
+    : elements_covered / spec.required_elements.length;
+  const disc_pct = spec.mandatory_disclosures.length === 0
+    ? 1
+    : disclosures_covered / spec.mandatory_disclosures.length;
+  const env_pct = envelope_present ? 1 : 0;
+  const wc_pct = wc_ok ? 1 : 0.5;
+
+  const score_raw = (
+    sub_pct  * 0.30 +
+    elem_pct * 0.30 +
+    disc_pct * 0.20 +
+    env_pct  * 0.10 +
+    wc_pct   * 0.10
+  );
+  const score = Math.round(Math.max(0, Math.min(1, score_raw)) * 100);
+
+  return {
+    target_market:                   std.target_market,
+    section_code:                    spec.section_code,
+    statutory_anchor:                spec.statutory_anchor,
+    document_type:                   std.document_type,
+    required_subheadings:            spec.output_schema.required_subheadings,
+    subheadings_present:             present,
+    subheadings_missing:             missing,
+    required_elements_total:         spec.required_elements.length,
+    required_elements_covered:       elements_covered,
+    mandatory_disclosures_total:     spec.mandatory_disclosures.length,
+    mandatory_disclosures_covered:   disclosures_covered,
+    word_count:                      wc,
+    word_count_min:                  spec.min_word_count,
+    word_count_max:                  spec.max_word_count,
+    word_count_ok:                   wc_ok,
+    json_envelope_present:           envelope_present,
+    parsed_envelope_gaps:            Array.isArray(envelope?.gaps) ? envelope!.gaps as string[] : [],
+    parsed_envelope_checklist:       Array.isArray(envelope?.compliance_checklist)
+      ? envelope!.compliance_checklist as PfsLintItem[]
+      : [],
+    lint_violations:                 violations,
+    compliance_score:                score,
+  };
 }
 
 // Singleton

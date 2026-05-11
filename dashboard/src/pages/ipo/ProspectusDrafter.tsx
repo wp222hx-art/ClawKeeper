@@ -1,20 +1,26 @@
 // file: dashboard/src/pages/ipo/ProspectusDrafter.tsx
-// description: Prospectus Drafter — each section now invokes the matching
-//              drafting agent through /api/ipo/agents/:id/run so users get a
-//              real (or dry-run) draft per section. SEC sections route to
-//              specialized SEC drafters; HKEX sections route to hkex_a1_drafter
-//              with section-specific framing, except ESG which routes to
-//              hkex_esg_disclosure_drafter.
+// description: Prospectus Drafter — each section invokes the matching drafting
+//              agent through /api/ipo/agents/:id/run. The request now also
+//              passes target_market + prospectus_section so the backend's
+//              Prospectus Format Standards (PFS) registry injects the correct
+//              jurisdiction-specific format requirements (Reg S-K items, HKEX
+//              App.1A anchors, mandatory disclosure phrases, required
+//              subheadings, word-count floors) into the agent's system prompt
+//              and lints the output for compliance. The result panel renders
+//              both the draft and the PFS compliance report (score, missing
+//              subheadings, required-element coverage, disclosure coverage,
+//              gaps reported by the model itself).
 
 import { useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
-import { ArrowLeft, FileText, Loader2, Play } from 'lucide-react';
-import { useT, useLocale } from '@/lib/i18n';
+import { ArrowLeft, FileText, Loader2, Play, ShieldCheck, AlertTriangle } from 'lucide-react';
+import { useT, useLocale, useMarketLabel } from '@/lib/i18n';
 import type { TranslationKey } from '@/lib/i18n';
-import { ipo_api, type AgentRunResult } from '@/lib/ipo-api';
+import { ipo_api, type AgentRunResult, type PfsReport, type TargetMarket } from '@/lib/ipo-api';
 
 interface SectionEntry { code: string; name_key: TranslationKey; ref: string; agent_id: string }
 
@@ -46,24 +52,54 @@ const HKEX_SECTIONS: SectionEntry[] = [
 
 interface RunState { loading: boolean; result?: AgentRunResult; error?: string }
 
+// Map UI group → the canonical TargetMarket used by the PFS registry.
+// SEC group: default to NASDAQ_GS (most stringent SEC tier; standards are
+// shared across all SEC venues anyway). HKEX group: default to HKEX_MAIN.
+// If the project has its own target_market, prefer that.
+function pick_target_market(group: 'sec' | 'hkex', project_market: TargetMarket | undefined): TargetMarket {
+  if (group === 'sec') {
+    if (project_market && project_market.startsWith('SEC_')) return project_market;
+    return 'SEC_NASDAQ_GS';
+  }
+  if (project_market === 'HKEX_GEM') return 'HKEX_GEM';
+  return 'HKEX_MAIN';
+}
+
 export function IpoProspectusDrafter() {
   const { id } = useParams<{ id: string }>();
   const t = useT();
   const { locale } = useLocale();
+  const market_label = useMarketLabel();
   const [runs, set_runs] = useState<Record<string, RunState>>({});
   const [open, set_open] = useState<string | null>(null);
+
+  // Pull the project so we know the user's chosen target_market.
+  const { data: project_data } = useQuery({
+    queryKey: ['ipo-project', id],
+    queryFn: () => ipo_api.get_project(id!),
+    enabled: !!id,
+  });
+  const project_market = project_data?.project.target_market;
 
   const run_section = async (group: 'sec' | 'hkex', s: SectionEntry) => {
     const key = `${group}:${s.code}`;
     set_runs(r => ({ ...r, [key]: { loading: true } }));
     set_open(key);
     try {
+      const target_market = pick_target_market(group, project_market);
       const section_label = t(s.name_key);
-      const venue = group === 'sec' ? 'US SEC (S-1/F-1)' : 'HKEX Main Board';
+      const venue_label = market_label(target_market);
       const prompt = locale === 'zh'
-        ? `请为 IPO 项目 ${id} 起草招股说明书的「${section_label}」章节。\n\n上市地：${venue}\n监管引用：${s.ref}\n\n请输出符合该法规章节要求的初稿，并对每条声明附带可追溯的引用占位符。如果缺少公司具体数据，请用合理的示例数据填充并明确标注「[示例]」。请按 Findings → Reasoning → Next Actions 结构输出。`
-        : `Draft the "${section_label}" section of the prospectus for IPO project ${id}.\n\nVenue: ${venue}\nRegulatory anchor: ${s.ref}\n\nReturn a compliant first draft. Attach traceable citation placeholders to every assertion. If concrete company data is missing, fill with reasonable examples clearly marked "[example]". Structure as Findings → Reasoning → Next Actions.`;
-      const { result } = await ipo_api.run_agent(s.agent_id, { prompt, locale });
+        ? `请为 IPO 项目 ${id} 起草招股说明书的「${section_label}」章节。\n\n上市地：${venue_label}（${target_market}）\n监管引用：${s.ref}\n\n你必须严格遵守上方「格式标准（强制约束）」中列出的所有要求：必备子节标题、必备要素、强制披露语句、字数要求与引用要求。如果缺少公司具体数据，请用合理示例数据填充并明确标注「[示例]」；不可虚构关键披露事实。最后必须附带 \`\`\`json 合规信封，由我们的 PFS 校验器读取。`
+        : `Draft the "${section_label}" section of the prospectus for IPO project ${id}.\n\nVenue: ${venue_label} (${target_market})\nRegulatory anchor: ${s.ref}\n\nYou MUST strictly conform to the "Format Standard (binding)" block above: produce every required subheading in order, cover every required element, include the mandatory disclosure language, hit the word-count band, and cite the listed authorities. Where concrete company data is missing, fill with reasonable examples clearly marked "[example]" — do NOT fabricate key disclosure facts. End with the \`\`\`json compliance envelope so the PFS linter can score it.`;
+      const { result } = await ipo_api.run_agent(s.agent_id, {
+        prompt,
+        locale,
+        target_market,
+        prospectus_section: s.code,
+        // Give the model enough room for a long-form section.
+        max_tokens: 4000,
+      });
       set_runs(r => ({ ...r, [key]: { loading: false, result } }));
     } catch (e) {
       set_runs(r => ({ ...r, [key]: { loading: false, error: (e as Error).message } }));
@@ -82,6 +118,17 @@ export function IpoProspectusDrafter() {
         <p className="text-muted-foreground mt-1">
           {t('prosp.subtitle')}
         </p>
+        {project_market && (
+          <div className="mt-2 text-xs text-muted-foreground">
+            {locale === 'zh' ? '项目上市地：' : 'Project listing venue: '}
+            <code className="px-1.5 py-0.5 rounded bg-muted">{project_market}</code> · {market_label(project_market)}
+            <span className="ml-2 text-muted-foreground/70">
+              {locale === 'zh'
+                ? '— 起草请求会自动注入对应的 PFS 格式标准。'
+                : '— PFS format standards will be injected automatically into each draft request.'}
+            </span>
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -141,6 +188,9 @@ function SectionGroup({
                   <div className="text-xs text-muted-foreground">{s.ref} · <code>{s.agent_id}</code></div>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
+                  {r?.result?.pfs_report && (
+                    <PfsScoreBadge score={r.result.pfs_report.compliance_score} />
+                  )}
                   <Badge variant={status_variant as 'default' | 'outline' | 'destructive'}>{status_label}</Badge>
                   <Button size="sm" disabled={r?.loading} onClick={() => on_run(group, s)}>
                     {r?.loading
@@ -163,13 +213,14 @@ function SectionGroup({
                 </div>
               )}
               {is_open && r?.result && (
-                <div className="px-3 pb-3 space-y-1.5">
+                <div className="px-3 pb-3 space-y-2">
                   <div className="text-xs text-muted-foreground">
                     {t('agents.run.provider_label')}: <code>{r.result.provider}</code> ·{' '}
                     {t('agents.run.model_label')}: <code>{r.result.model}</code> · {r.result.ms_elapsed}ms
                     {r.result.citation_required && <span> · 📚</span>}
                   </div>
-                  <pre className="text-xs whitespace-pre-wrap p-2 rounded border bg-muted/30 max-h-60 overflow-y-auto">
+                  {r.result.pfs_report && <PfsReportPanel report={r.result.pfs_report} />}
+                  <pre className="text-xs whitespace-pre-wrap p-2 rounded border bg-muted/30 max-h-72 overflow-y-auto">
                     {r.result.output}
                   </pre>
                 </div>
@@ -179,5 +230,123 @@ function SectionGroup({
         })}
       </CardContent>
     </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// PFS UI components
+// ---------------------------------------------------------------------------
+
+function PfsScoreBadge({ score }: { score: number }) {
+  const tone =
+    score >= 85 ? 'bg-green-600 text-white'
+    : score >= 65 ? 'bg-yellow-500 text-black'
+    : 'bg-red-600 text-white';
+  return (
+    <span className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-mono ${tone}`}>
+      <ShieldCheck className="h-3 w-3" /> PFS {score}
+    </span>
+  );
+}
+
+function PfsReportPanel({ report }: { report: PfsReport }) {
+  const { locale } = useLocale();
+  const zh = locale === 'zh';
+  const wc_band = report.word_count_min || report.word_count_max
+    ? `${report.word_count_min ?? 0}–${report.word_count_max ?? '∞'}`
+    : '—';
+  return (
+    <div className="rounded border bg-card p-2 space-y-1.5 text-xs">
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="font-semibold flex items-center gap-1">
+          <ShieldCheck className="h-3.5 w-3.5" />
+          {zh ? 'PFS 合规校验' : 'PFS Compliance Report'}
+        </span>
+        <PfsScoreBadge score={report.compliance_score} />
+        <code className="text-[10px] px-1 py-0.5 rounded bg-muted">{report.target_market}</code>
+        <span className="text-muted-foreground text-[10px]">{report.statutory_anchor}</span>
+      </div>
+
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-1 text-[11px]">
+        <Metric
+          label={zh ? '子节标题' : 'Subheadings'}
+          value={`${report.subheadings_present.length}/${report.required_subheadings.length}`}
+          ok={report.subheadings_missing.length === 0}
+        />
+        <Metric
+          label={zh ? '必备要素' : 'Elements'}
+          value={`${report.required_elements_covered}/${report.required_elements_total}`}
+          ok={report.required_elements_covered === report.required_elements_total}
+        />
+        <Metric
+          label={zh ? '强制披露' : 'Disclosures'}
+          value={`${report.mandatory_disclosures_covered}/${report.mandatory_disclosures_total}`}
+          ok={report.mandatory_disclosures_covered === report.mandatory_disclosures_total}
+        />
+        <Metric
+          label={zh ? `字数 (${wc_band})` : `Words (${wc_band})`}
+          value={String(report.word_count)}
+          ok={report.word_count_ok}
+        />
+      </div>
+
+      {report.subheadings_missing.length > 0 && (
+        <div className="text-[11px]">
+          <div className="text-muted-foreground mb-0.5">
+            {zh ? '缺失子节：' : 'Missing subheadings:'}
+          </div>
+          <ul className="list-disc list-inside text-destructive">
+            {report.subheadings_missing.slice(0, 6).map(h => <li key={h}>{h}</li>)}
+            {report.subheadings_missing.length > 6 && (
+              <li className="text-muted-foreground">… +{report.subheadings_missing.length - 6}</li>
+            )}
+          </ul>
+        </div>
+      )}
+
+      {report.parsed_envelope_gaps.length > 0 && (
+        <div className="text-[11px]">
+          <div className="flex items-center gap-1 text-amber-600 dark:text-amber-400 mb-0.5">
+            <AlertTriangle className="h-3 w-3" />
+            {zh ? '模型自报缺口（gaps）：' : 'Model-reported gaps:'}
+          </div>
+          <ul className="list-disc list-inside">
+            {report.parsed_envelope_gaps.slice(0, 6).map((g, i) => <li key={i}>{g}</li>)}
+            {report.parsed_envelope_gaps.length > 6 && (
+              <li className="text-muted-foreground">… +{report.parsed_envelope_gaps.length - 6}</li>
+            )}
+          </ul>
+        </div>
+      )}
+
+      {report.lint_violations.length > 0 && (
+        <div className="text-[11px]">
+          <div className="text-muted-foreground mb-0.5">
+            {zh ? '校验器违规：' : 'Linter violations:'}
+          </div>
+          <ul className="list-disc list-inside text-destructive">
+            {report.lint_violations.slice(0, 4).map((v, i) => <li key={i}>{v}</li>)}
+          </ul>
+        </div>
+      )}
+
+      <div className="text-[10px] text-muted-foreground">
+        {zh ? 'JSON 合规信封：' : 'JSON envelope:'}{' '}
+        {report.json_envelope_present
+          ? <span className="text-green-700">✓</span>
+          : <span className="text-destructive">✗ {zh ? '未检测到' : 'not detected'}</span>}
+      </div>
+    </div>
+  );
+}
+
+function Metric({ label, value, ok }: { label: string; value: string; ok: boolean }) {
+  return (
+    <div className={`rounded px-1.5 py-1 ${ok ? 'bg-green-50 dark:bg-green-900/20' : 'bg-red-50 dark:bg-red-900/20'}`}>
+      <div className="text-[9px] uppercase text-muted-foreground tracking-wide">{label}</div>
+      <div className={`font-mono ${ok ? 'text-green-700 dark:text-green-400' : 'text-red-700 dark:text-red-400'}`}>
+        {value}
+      </div>
+    </div>
   );
 }
