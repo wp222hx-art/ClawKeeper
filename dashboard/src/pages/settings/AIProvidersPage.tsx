@@ -19,7 +19,9 @@ type Code = 'TOKENHOT' | 'OPENAI' | 'ANTHROPIC' | 'DEEPSEEK';
 type CapabilityFilter = 'all' | 'chat' | 'embedding' | 'image' | 'other';
 
 const PROVIDERS: Array<{ code: Code; label: string; default_chat: string; supports_embed: boolean; default_base?: string }> = [
-  { code: 'TOKENHOT',  label: 'TokenHot',  default_chat: 'gpt-4o-mini',                 supports_embed: true,  default_base: 'https://api.tokenhot.ai/v1' },
+  // For TokenHot, gpt-4o-mini is NOT in the default group on most accounts —
+  // claude-sonnet-4.6 is the safest preselect since the user's account has it.
+  { code: 'TOKENHOT',  label: 'TokenHot',  default_chat: 'claude-sonnet-4.6',           supports_embed: true,  default_base: 'https://api.tokenhot.ai/v1' },
   { code: 'OPENAI',    label: 'OpenAI',    default_chat: 'gpt-4o-mini',                 supports_embed: true },
   { code: 'ANTHROPIC', label: 'Anthropic', default_chat: 'claude-3-5-sonnet-20241022',  supports_embed: false },
   { code: 'DEEPSEEK',  label: 'DeepSeek',  default_chat: 'deepseek-chat',               supports_embed: false },
@@ -59,20 +61,37 @@ export function AIProvidersPage() {
     },
   });
 
+  const meta = PROVIDERS.find(p => p.code === selected)!;
+
+  const health = useMutation({
+    mutationFn: () => ipo_api.health_check_providers(),
+  });
+
   const register = useMutation({
-    mutationFn: () => ipo_api.register_provider({
-      code: selected,
-      api_key,
-      base_url: base_url || undefined,
-      default_chat_model: chat_model || undefined,
-      default_embedding_model: embed_model || undefined,
-      make_default,
-      persist,
-    }),
+    mutationFn: async () => {
+      // Belt-and-suspenders: if the user didn't type a chat model, fall back
+      // to the per-provider preset (claude-sonnet-4.6 for TokenHot, etc.) so
+      // the DB row never gets a NULL default_model that re-bootstraps to the
+      // unreachable hardcoded gpt-4o-mini on TokenHot.
+      const effective_chat  = (chat_model  || meta.default_chat).trim();
+      const effective_base  = (base_url    || meta.default_base || '').trim();
+      const effective_embed = embed_model.trim();
+      return ipo_api.register_provider({
+        code: selected,
+        api_key,
+        base_url: effective_base || undefined,
+        default_chat_model: effective_chat || undefined,
+        default_embedding_model: effective_embed || undefined,
+        make_default,
+        persist,
+      });
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['ipo-providers'] });
       set_api_key('');
       set_models(null);
+      // Auto-run a health check so the user instantly sees green/red.
+      health.mutate();
     },
   });
 
@@ -80,12 +99,6 @@ export function AIProvidersPage() {
     mutationFn: (code: string) => ipo_api.set_default_provider(code),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['ipo-providers'] }),
   });
-
-  const health = useMutation({
-    mutationFn: () => ipo_api.health_check_providers(),
-  });
-
-  const meta = PROVIDERS.find(p => p.code === selected)!;
 
   // ---------------------------------------------------------------------------
   // Model filtering

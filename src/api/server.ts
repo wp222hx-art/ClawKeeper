@@ -34,6 +34,10 @@ const sql = postgres(process.env.DATABASE_URL!, {
   idle_timeout: 20,
 });
 
+// Re-export so other modules (e.g. boot rehydration in src/index.ts) can
+// share the same pool instead of opening a second one.
+export { sql };
+
 // Create Hono app with typed environment
 const app = new Hono<AppEnv>();
 

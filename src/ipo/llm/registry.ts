@@ -8,6 +8,7 @@
 // reference: src/ipo/llm/provider.ts, src/ipo/llm/openai_compatible.ts,
 //            src/ipo/llm/anthropic.ts, db/ipo_schema.sql (ipo_ai_providers)
 
+import type { Sql } from 'postgres';
 import {
   type LlmProvider,
   type AiProviderCode,
@@ -140,6 +141,59 @@ export class LlmProviderRegistry {
       this.default_provider = wanted_default;
     }
     return { registered, default_provider: this.default_provider };
+  }
+
+  /**
+   * Phase-1.5 rehydration from the ipo_ai_providers table. On every server
+   * boot, walk all enabled rows and re-register them in the live registry so
+   * that credentials persisted via POST /api/ipo/providers (with persist=true)
+   * survive process restarts.
+   *
+   * Note: Phase 1 stores api_key as plaintext in the api_key_encrypted column.
+   * Phase 2 will route through a KMS / Vault.
+   *
+   * Returns the list of provider codes successfully rehydrated.
+   */
+  async bootstrap_from_db(
+    sql: Sql<Record<string, unknown>>,
+  ): Promise<{ rehydrated: AiProviderCode[]; default_provider: AiProviderCode | null; errors: Array<{ code: string; error: string }> }> {
+    const rehydrated: AiProviderCode[] = [];
+    const errors: Array<{ code: string; error: string }> = [];
+    const valid_codes: AiProviderCode[] = ['TOKENHOT', 'OPENAI', 'ANTHROPIC', 'DEEPSEEK'];
+    try {
+      const rows = await sql`
+        SELECT provider_code, display_name, base_url,
+               default_model, embedding_model,
+               api_key_encrypted, is_default, enabled
+        FROM ipo_ai_providers
+        WHERE enabled = true
+          AND api_key_encrypted IS NOT NULL
+          AND api_key_encrypted <> ''
+        ORDER BY is_default DESC, updated_at DESC
+      `;
+      for (const row of rows) {
+        const code = row.provider_code as AiProviderCode;
+        if (!valid_codes.includes(code)) continue; // skip codes not yet wired
+        // Skip if env-bootstrapped already registered this code (env wins)
+        if (this.entries.has(code)) continue;
+        try {
+          this.register({
+            code,
+            api_key: String(row.api_key_encrypted),
+            base_url: (row.base_url as string | null) ?? undefined,
+            default_chat_model: (row.default_model as string | null) ?? undefined,
+            default_embedding_model: (row.embedding_model as string | null) ?? undefined,
+            display_name: (row.display_name as string | null) ?? undefined,
+          }, { make_default: row.is_default === true });
+          rehydrated.push(code);
+        } catch (e) {
+          errors.push({ code, error: e instanceof Error ? e.message : String(e) });
+        }
+      }
+    } catch (e) {
+      errors.push({ code: 'QUERY', error: e instanceof Error ? e.message : String(e) });
+    }
+    return { rehydrated, default_provider: this.default_provider, errors };
   }
 }
 

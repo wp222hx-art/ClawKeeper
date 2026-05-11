@@ -59,15 +59,40 @@ console.log(
   `[IPOPilot] Skill coverage: AGENT.md ${_coverage.agents_with_agent_md}/${_coverage.total_agents}, ` +
   `SKILL.md ${_coverage.skills_with_content}/${_coverage.unique_skills}`
 );
-// Bootstrap LLM provider registry from environment variables.
+// Bootstrap LLM provider registry from environment variables FIRST
+// (env wins over DB if both are present for the same code).
 const _llm_boot = llm_provider_registry.bootstrap_from_env();
-if (_llm_boot.registered.length === 0) {
-  console.log('[IPOPilot] AI provider: NOT CONFIGURED — set IPO_TOKENHOT_API_KEY (or OPENAI/ANTHROPIC/DEEPSEEK) to enable agents');
-} else {
+if (_llm_boot.registered.length > 0) {
   console.log(
-    `[IPOPilot] AI providers configured: ${_llm_boot.registered.join(', ')} ` +
+    `[IPOPilot] AI providers from env: ${_llm_boot.registered.join(', ')} ` +
     `(default: ${_llm_boot.default_provider ?? 'none'})`
   );
+}
+
+// Then rehydrate any DB-persisted providers (POST /api/ipo/providers with
+// persist=true). This lets keys saved through the UI survive restarts.
+try {
+  const { sql } = await import('./api/server');
+  const _db_boot = await llm_provider_registry.bootstrap_from_db(sql);
+  if (_db_boot.rehydrated.length > 0) {
+    console.log(
+      `[IPOPilot] AI providers from DB: ${_db_boot.rehydrated.join(', ')} ` +
+      `(default: ${_db_boot.default_provider ?? 'none'})`
+    );
+  }
+  if (_db_boot.errors.length > 0) {
+    for (const e of _db_boot.errors) {
+      console.warn(`[IPOPilot] DB rehydration warning [${e.code}]: ${e.error}`);
+    }
+  }
+} catch (e) {
+  console.warn('[IPOPilot] DB rehydration skipped:', e instanceof Error ? e.message : e);
+}
+
+if (!llm_provider_registry.is_configured()) {
+  console.log('[IPOPilot] AI provider: NOT CONFIGURED — set IPO_TOKENHOT_API_KEY (or OPENAI/ANTHROPIC/DEEPSEEK), or POST to /api/ipo/providers with persist=true');
+} else {
+  console.log('[IPOPilot] ✅ AI providers ready — agents will run in LIVE mode');
 }
 void ALL_IPO_AGENTS; // keep import live for tree-shaking awareness
 
