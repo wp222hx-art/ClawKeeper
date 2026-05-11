@@ -13,6 +13,8 @@ import {
   type EmbeddingResponse,
   type ProviderHealth,
   type ProviderConfig,
+  type ListModelsResponse,
+  type ModelInfo,
   ProviderError,
 } from './provider';
 
@@ -162,6 +164,103 @@ export class OpenAiCompatibleProvider implements LlmProvider {
       };
     }
   }
+
+  /**
+   * GET {base_url}/models — TokenHot, OpenAI, and DeepSeek all expose this
+   * endpoint with the same schema: { object: 'list', data: [{ id, owned_by,
+   * created, ... }] }. We then heuristically classify each entry into a
+   * capability bucket so the UI can offer "chat models only" / "embedding
+   * models only" filters.
+   */
+  async list_models(): Promise<ListModelsResponse> {
+    const url = `${this.base_url}/models`;
+    const resp = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${this.api_key}`,
+        'Content-Type': 'application/json',
+      },
+    });
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => '');
+      throw new ProviderError(this.code, resp.status, `list_models HTTP ${resp.status}: ${text.slice(0, 500)}`);
+    }
+    const json = (await resp.json()) as {
+      object?: string;
+      data?: Array<{
+        id: string;
+        owned_by?: string;
+        created?: number;
+        // some providers add their own non-standard fields
+        context_length?: number;
+        context_window?: number;
+        max_context_length?: number;
+        type?: string;
+        capability?: string;
+      }>;
+    };
+    const raw_models = json.data ?? [];
+    const models: ModelInfo[] = raw_models.map((m) => ({
+      id: m.id,
+      display_name: m.id,
+      family: extract_family(m.id),
+      capability: classify_capability(m.id, m.type ?? m.capability),
+      context_window: m.context_length ?? m.context_window ?? m.max_context_length ?? null,
+      owned_by: m.owned_by ?? null,
+      created_at: m.created ? new Date(m.created * 1000).toISOString() : null,
+      raw: m,
+    }));
+    return {
+      provider: this.code,
+      count: models.length,
+      models,
+      fetched_at: new Date().toISOString(),
+    };
+  }
+}
+
+/** Heuristic — group models by family name for UI filtering. */
+function extract_family(id: string): string {
+  const lower = id.toLowerCase();
+  if (lower.includes('gpt-4o')) return 'gpt-4o';
+  if (lower.includes('gpt-4.1')) return 'gpt-4.1';
+  if (lower.includes('gpt-4')) return 'gpt-4';
+  if (lower.includes('gpt-3.5')) return 'gpt-3.5';
+  if (lower.includes('o1')) return 'o1';
+  if (lower.includes('o3')) return 'o3';
+  if (lower.includes('claude-3-5')) return 'claude-3-5';
+  if (lower.includes('claude-3')) return 'claude-3';
+  if (lower.includes('claude')) return 'claude';
+  if (lower.includes('deepseek-r1') || lower.includes('deepseek-reasoner')) return 'deepseek-r1';
+  if (lower.includes('deepseek-v3') || lower.includes('deepseek-chat')) return 'deepseek-v3';
+  if (lower.includes('deepseek')) return 'deepseek';
+  if (lower.includes('gemini')) return 'gemini';
+  if (lower.includes('qwen')) return 'qwen';
+  if (lower.includes('llama')) return 'llama';
+  if (lower.includes('embedding')) return 'embedding';
+  if (lower.includes('whisper')) return 'whisper';
+  if (lower.includes('tts')) return 'tts';
+  if (lower.includes('dall-e') || lower.includes('image')) return 'image';
+  return 'other';
+}
+
+/** Heuristic — classify a model into a capability bucket from id/type hints. */
+function classify_capability(id: string, type_hint?: string): ModelInfo['capability'] {
+  const t = (type_hint ?? '').toLowerCase();
+  const i = id.toLowerCase();
+  if (t.includes('embed') || i.includes('embedding') || i.startsWith('text-embedding')) return 'embedding';
+  if (t.includes('image') || i.includes('dall-e') || i.includes('image') || i.includes('flux') || i.includes('sd-')) return 'image';
+  if (t.includes('audio') || i.includes('whisper') || i.includes('tts') || i.includes('voice')) return 'audio';
+  if (t.includes('rerank') || i.includes('rerank')) return 'rerank';
+  // Reasonable default: anything else accepting tokens is treated as chat.
+  if (
+    i.startsWith('gpt-') || i.includes('chat') || i.includes('claude') ||
+    i.includes('deepseek') || i.includes('gemini') || i.includes('qwen') ||
+    i.includes('llama') || i.startsWith('o1') || i.startsWith('o3') ||
+    i.includes('mistral') || i.includes('mixtral') || i.includes('grok') ||
+    i.includes('kimi') || i.includes('glm') || i.includes('yi-')
+  ) return 'chat';
+  return 'unknown';
 }
 
 function normalize_finish(s: string | undefined): ChatCompletionResponse['finish_reason'] {

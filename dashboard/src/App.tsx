@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { use_auth_store } from './stores/auth-store';
 import { AppShell } from './components/layout/AppShell';
+import { LanguageProvider } from './lib/i18n';
 import { LoginPage } from './pages/auth/LoginPage';
 import { DashboardHome } from './pages/dashboard/DashboardHome';
 import { InvoicesPage } from './pages/invoices/InvoicesPage';
@@ -28,6 +29,7 @@ import { IpoKnowledgeBase } from './pages/ipo/KnowledgeBase';
 import { IpoReviewQueue } from './pages/ipo/ReviewQueue';
 import { IpoAgentCatalog } from './pages/ipo/AgentCatalog';
 import { AIProvidersPage } from './pages/settings/AIProvidersPage';
+import { HelpCenterPage } from './pages/help/HelpCenter';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { is_authenticated } = use_auth_store();
@@ -41,6 +43,7 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 
 function App() {
   return (
+    <LanguageProvider>
     <BrowserRouter>
       <Routes>
         {/* Public */}
@@ -78,6 +81,7 @@ function App() {
         <Route path="/ipo/agents" element={<ProtectedRoute><IpoAgentCatalog /></ProtectedRoute>} />
 
         {/* System */}
+        <Route path="/help" element={<ProtectedRoute><HelpCenterPage /></ProtectedRoute>} />
         <Route path="/settings/ai-providers" element={<ProtectedRoute><AIProvidersPage /></ProtectedRoute>} />
         <Route path="/settings" element={<ProtectedRoute><SettingsPage /></ProtectedRoute>} />
         
@@ -85,6 +89,7 @@ function App() {
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>
+    </LanguageProvider>
   );
 }
 

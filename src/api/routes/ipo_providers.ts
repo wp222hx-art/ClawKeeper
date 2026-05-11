@@ -10,6 +10,8 @@ import { z } from 'zod';
 import type { Sql } from 'postgres';
 import type { AppEnv } from '../../types/hono';
 import { llm_provider_registry } from '../../ipo/llm/registry';
+import { OpenAiCompatibleProvider } from '../../ipo/llm/openai_compatible';
+import { AnthropicProvider } from '../../ipo/llm/anthropic';
 
 // Phase 1 only supports the 4 codes wired in src/ipo/llm/*. Additional codes
 // (AZURE_OPENAI, GOOGLE_GEMINI, CUSTOM) are reserved in the DB enum but not
@@ -40,8 +42,11 @@ export function create_ipo_provider_routes(sql: Sql<Record<string, unknown>>) {
     let persisted: Array<Record<string, unknown>> = [];
     try {
       persisted = await sql`
-        SELECT id, code, display_name, base_url, default_chat_model,
-               default_embedding_model, is_default, status, last_health_check_at,
+        SELECT id, provider_code AS code, display_name, base_url,
+               default_model AS default_chat_model,
+               embedding_model AS default_embedding_model,
+               is_default, enabled, api_key_last4,
+               last_health_check_at, last_health_status,
                created_at, updated_at
         FROM ipo_ai_providers
         WHERE tenant_id = ${tenant_id}
@@ -83,25 +88,35 @@ export function create_ipo_provider_routes(sql: Sql<Record<string, unknown>>) {
       );
 
       if (input.persist) {
+        // NOTE: The DB column is named `api_key_encrypted` but in Phase 1 we
+        // store plaintext (Phase 2 wires KMS). The user_id arg is unused by
+        // this schema — we keep it on the function signature for forward
+        // compat with the audit_log trigger.
+        void user_id;
+        const last4 = input.api_key.slice(-4);
         await sql`
           INSERT INTO ipo_ai_providers (
-            tenant_id, code, display_name, base_url, default_chat_model,
-            default_embedding_model, api_key_ciphertext, is_default,
-            status, created_by_user_id, created_at, updated_at
+            tenant_id, provider_code, display_name, base_url,
+            default_model, embedding_model,
+            api_key_encrypted, api_key_last4,
+            is_default, enabled,
+            created_at, updated_at
           ) VALUES (
             ${tenant_id}, ${input.code}, ${input.display_name ?? input.code},
-            ${input.base_url ?? null}, ${input.default_chat_model ?? null},
+            ${input.base_url ?? null},
+            ${input.default_chat_model ?? null},
             ${input.default_embedding_model ?? null},
-            ${input.api_key},
-            ${input.make_default ?? false},
-            'ACTIVE', ${user_id}, NOW(), NOW()
+            ${input.api_key}, ${last4},
+            ${input.make_default ?? false}, true,
+            NOW(), NOW()
           )
-          ON CONFLICT (tenant_id, code) DO UPDATE
+          ON CONFLICT (tenant_id, provider_code) DO UPDATE
             SET display_name = EXCLUDED.display_name,
                 base_url = EXCLUDED.base_url,
-                default_chat_model = EXCLUDED.default_chat_model,
-                default_embedding_model = EXCLUDED.default_embedding_model,
-                api_key_ciphertext = EXCLUDED.api_key_ciphertext,
+                default_model = EXCLUDED.default_model,
+                embedding_model = EXCLUDED.embedding_model,
+                api_key_encrypted = EXCLUDED.api_key_encrypted,
+                api_key_last4 = EXCLUDED.api_key_last4,
                 is_default = EXCLUDED.is_default,
                 updated_at = NOW()
         `;
@@ -142,6 +157,58 @@ export function create_ipo_provider_routes(sql: Sql<Record<string, unknown>>) {
     if (!tenant_id) return c.json({ error: 'Unauthorized' }, 401);
     const result = await llm_provider_registry.health_check_all();
     return c.json({ checked_at: new Date().toISOString(), results: result });
+  });
+
+  // GET /api/ipo/providers/:code/models — list available models from the
+  // already-registered provider with that code. The frontend uses this to
+  // populate the chat/embedding model dropdowns AFTER the user has registered.
+  app.get('/:code/models', async (c) => {
+    const tenant_id = c.get('tenant_id');
+    if (!tenant_id) return c.json({ error: 'Unauthorized' }, 401);
+    const code_param = c.req.param('code').toUpperCase();
+    const code_parsed = ImplementedProviderCodeSchema.safeParse(code_param);
+    if (!code_parsed.success) return c.json({ error: 'Invalid provider code' }, 422);
+
+    try {
+      const provider = llm_provider_registry.get(code_parsed.data);
+      const models = await provider.list_models();
+      return c.json(models);
+    } catch (e) {
+      return c.json({
+        error: e instanceof Error ? e.message : String(e),
+      }, 502);
+    }
+  });
+
+  // POST /api/ipo/providers/probe-models — one-shot model list using a
+  // user-supplied api_key (no persistence, no registry mutation). Used by the
+  // Settings UI so the operator can preview available models BEFORE saving.
+  const ProbeModelsSchema = z.object({
+    code: ImplementedProviderCodeSchema,
+    api_key: z.string().min(8),
+    base_url: z.string().url().optional(),
+  });
+  app.post('/probe-models', async (c) => {
+    const tenant_id = c.get('tenant_id');
+    if (!tenant_id) return c.json({ error: 'Unauthorized' }, 401);
+    let body: unknown;
+    try { body = await c.req.json(); }
+    catch { return c.json({ error: 'Invalid JSON body' }, 400); }
+    const parsed = ProbeModelsSchema.safeParse(body);
+    if (!parsed.success) return c.json({ error: 'Validation failed', issues: parsed.error.issues }, 422);
+    const { code, api_key, base_url } = parsed.data;
+
+    try {
+      const tmp_provider = code === 'ANTHROPIC'
+        ? new AnthropicProvider({ code, api_key, base_url })
+        : new OpenAiCompatibleProvider({ code, api_key, base_url });
+      const models = await tmp_provider.list_models();
+      return c.json(models);
+    } catch (e) {
+      return c.json({
+        error: e instanceof Error ? e.message : String(e),
+      }, 502);
+    }
   });
 
   return app;

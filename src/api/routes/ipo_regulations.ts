@@ -27,15 +27,15 @@ export function create_ipo_regulation_routes(sql: Sql<Record<string, unknown>>) 
     const jurisdiction = c.req.query('jurisdiction');
     try {
       const rows = jurisdiction
-        ? await sql`SELECT id, code, title, jurisdiction, authority, version,
-                           effective_date, source_url, summary, tags
+        ? await sql`SELECT id, doc_type, title, jurisdiction, section, subsection,
+                           version, effective_date, source_url, language, metadata
                     FROM ipo_regulations
                     WHERE jurisdiction = ${jurisdiction}
-                    ORDER BY authority, code LIMIT 500`
-        : await sql`SELECT id, code, title, jurisdiction, authority, version,
-                           effective_date, source_url, summary, tags
+                    ORDER BY doc_type, title LIMIT 500`
+        : await sql`SELECT id, doc_type, title, jurisdiction, section, subsection,
+                           version, effective_date, source_url, language, metadata
                     FROM ipo_regulations
-                    ORDER BY jurisdiction, authority, code LIMIT 500`;
+                    ORDER BY jurisdiction, doc_type, title LIMIT 500`;
       return c.json({ regulations: rows, count: rows.length });
     } catch (e) {
       console.error('[ipo/regulations GET] error:', e);
@@ -74,9 +74,11 @@ export function create_ipo_regulation_routes(sql: Sql<Record<string, unknown>>) 
               const vec_literal = `[${vec.join(',')}]`;
               chunks = input.jurisdiction
                 ? await sql`
-                    SELECT c.id, c.regulation_id, c.section, c.heading, c.content,
+                    SELECT c.id, c.regulation_id, c.section_path AS section,
+                           c.chunk_heading AS heading, c.chunk_text AS content,
                            1 - (c.embedding <=> ${vec_literal}::vector) AS score,
-                           r.code, r.title, r.jurisdiction, r.authority, r.source_url
+                           r.doc_type, r.title, r.jurisdiction, r.section AS reg_section,
+                           r.source_url
                     FROM ipo_regulation_chunks c
                     JOIN ipo_regulations r ON r.id = c.regulation_id
                     WHERE r.jurisdiction = ${input.jurisdiction}
@@ -85,9 +87,11 @@ export function create_ipo_regulation_routes(sql: Sql<Record<string, unknown>>) 
                     LIMIT ${input.limit}
                   `
                 : await sql`
-                    SELECT c.id, c.regulation_id, c.section, c.heading, c.content,
+                    SELECT c.id, c.regulation_id, c.section_path AS section,
+                           c.chunk_heading AS heading, c.chunk_text AS content,
                            1 - (c.embedding <=> ${vec_literal}::vector) AS score,
-                           r.code, r.title, r.jurisdiction, r.authority, r.source_url
+                           r.doc_type, r.title, r.jurisdiction, r.section AS reg_section,
+                           r.source_url
                     FROM ipo_regulation_chunks c
                     JOIN ipo_regulations r ON r.id = c.regulation_id
                     WHERE c.embedding IS NOT NULL
@@ -105,22 +109,26 @@ export function create_ipo_regulation_routes(sql: Sql<Record<string, unknown>>) 
         const like_q = `%${input.query.replace(/[%_]/g, ' ')}%`;
         chunks = input.jurisdiction
           ? await sql`
-              SELECT c.id, c.regulation_id, c.section, c.heading, c.content,
+              SELECT c.id, c.regulation_id, c.section_path AS section,
+                     c.chunk_heading AS heading, c.chunk_text AS content,
                      0.0 AS score,
-                     r.code, r.title, r.jurisdiction, r.authority, r.source_url
+                     r.doc_type, r.title, r.jurisdiction, r.section AS reg_section,
+                     r.source_url
               FROM ipo_regulation_chunks c
               JOIN ipo_regulations r ON r.id = c.regulation_id
               WHERE r.jurisdiction = ${input.jurisdiction}
-                AND (c.content ILIKE ${like_q} OR c.heading ILIKE ${like_q})
+                AND (c.chunk_text ILIKE ${like_q} OR c.chunk_heading ILIKE ${like_q})
               LIMIT ${input.limit}
             `
           : await sql`
-              SELECT c.id, c.regulation_id, c.section, c.heading, c.content,
+              SELECT c.id, c.regulation_id, c.section_path AS section,
+                     c.chunk_heading AS heading, c.chunk_text AS content,
                      0.0 AS score,
-                     r.code, r.title, r.jurisdiction, r.authority, r.source_url
+                     r.doc_type, r.title, r.jurisdiction, r.section AS reg_section,
+                     r.source_url
               FROM ipo_regulation_chunks c
               JOIN ipo_regulations r ON r.id = c.regulation_id
-              WHERE c.content ILIKE ${like_q} OR c.heading ILIKE ${like_q}
+              WHERE c.chunk_text ILIKE ${like_q} OR c.chunk_heading ILIKE ${like_q}
               LIMIT ${input.limit}
             `;
       }
@@ -144,10 +152,11 @@ export function create_ipo_regulation_routes(sql: Sql<Record<string, unknown>>) 
       const reg_rows = await sql`SELECT * FROM ipo_regulations WHERE id = ${id} LIMIT 1`;
       if (reg_rows.length === 0) return c.json({ error: 'Not found' }, 404);
       const chunks = await sql`
-        SELECT id, section, heading, content, ordinal
+        SELECT id, section_path AS section, chunk_heading AS heading,
+               chunk_text AS content, chunk_index AS ordinal
         FROM ipo_regulation_chunks
         WHERE regulation_id = ${id}
-        ORDER BY ordinal ASC
+        ORDER BY chunk_index ASC
         LIMIT 500
       `;
       return c.json({ regulation: reg_rows[0], chunks });

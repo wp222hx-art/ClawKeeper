@@ -251,13 +251,16 @@ export class IpoOrchestrationService {
     return ALL_IPO_AGENTS.map(a => ({
       id: a.id,
       display_name: a.display_name,
+      display_name_zh: a.display_name_zh,
       tier: a.tier,
       category: a.category,
       description: a.description,
+      description_zh: a.description_zh,
       capabilities: a.capabilities,
       citation_required: a.citation_required,
       required_signoff_for_outputs: a.required_signoff_for_outputs ?? [],
       has_skill_files: a.skill_files.length > 0,
+      knowledge_acquisition: a.knowledge_acquisition ?? null,
     }));
   }
 

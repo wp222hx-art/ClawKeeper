@@ -114,7 +114,7 @@ export function create_ipo_project_routes(sql: Sql<Record<string, unknown>>) {
     try {
       const rows = await sql`
         SELECT id, company_legal_name, target_market, industry, listing_structure,
-               stage, status, target_filing_date, target_listing_date,
+               stage, status, target_listing_date,
                created_at, updated_at
         FROM ipo_projects
         WHERE tenant_id = ${tenant_id}
@@ -171,18 +171,37 @@ export function create_ipo_project_routes(sql: Sql<Record<string, unknown>>) {
       const project = project_rows[0];
 
       const [workstreams, findings_summary, documents_summary, signoffs_pending] = await Promise.all([
+        // Real schema column names: owner_agent_id (not lead_agent_id), no
+        // blocker_count column — derive blocker count via a correlated subquery
+        // from ipo_findings (severity in CRITICAL/HIGH that are still open).
+        // Aliased back to lead_agent_id so the API contract & frontend remain
+        // unchanged.
         sql`
-          SELECT id, workstream_type, status, lead_agent_id, started_at, completed_at,
-                 risk_level, blocker_count
-          FROM ipo_workstreams
-          WHERE project_id = ${id} AND tenant_id = ${tenant_id}
+          SELECT
+            w.id,
+            w.workstream_type,
+            w.status,
+            w.owner_agent_id AS lead_agent_id,
+            w.started_at,
+            w.completed_at,
+            w.risk_level,
+            COALESCE((
+              SELECT COUNT(*)::int
+              FROM ipo_findings f
+              WHERE f.workstream_id = w.id
+                AND f.tenant_id    = w.tenant_id
+                AND UPPER(f.status) IN ('OPEN','IN_PROGRESS')
+                AND UPPER(f.severity) IN ('CRITICAL','HIGH')
+            ), 0) AS blocker_count
+          FROM ipo_workstreams w
+          WHERE w.project_id = ${id} AND w.tenant_id = ${tenant_id}
         `,
         sql`
-          SELECT severity, COUNT(*)::int AS n
+          SELECT UPPER(severity) AS severity, COUNT(*)::int AS n
           FROM ipo_findings
           WHERE project_id = ${id} AND tenant_id = ${tenant_id}
-            AND status IN ('OPEN','IN_PROGRESS')
-          GROUP BY severity
+            AND UPPER(status) IN ('OPEN','IN_PROGRESS')
+          GROUP BY UPPER(severity)
         `,
         sql`
           SELECT status, COUNT(*)::int AS n
@@ -190,11 +209,18 @@ export function create_ipo_project_routes(sql: Sql<Record<string, unknown>>) {
           WHERE project_id = ${id} AND tenant_id = ${tenant_id}
           GROUP BY status
         `,
+        // Real schema: artifact_id (not document_id), status default is
+        // lowercase 'pending'. Alias artifact_id back to document_id so the
+        // dashboard payload contract stays unchanged for the frontend.
         sql`
-          SELECT id, document_id, reviewer_role, status, requested_at
+          SELECT id,
+                 artifact_id AS document_id,
+                 reviewer_role,
+                 status,
+                 requested_at
           FROM ipo_review_signoffs
           WHERE project_id = ${id} AND tenant_id = ${tenant_id}
-            AND status = 'PENDING'
+            AND UPPER(status) = 'PENDING'
           ORDER BY requested_at ASC
           LIMIT 50
         `,

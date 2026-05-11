@@ -3,6 +3,7 @@
 //              simulation workspace. Phase 1 surfaces a deterministic
 //              client-side preview using GBM with user-configurable inputs
 //              so users get a feel for the workspace without LLM calls.
+//              Localized via i18n.
 
 import { useMemo, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
@@ -11,6 +12,7 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Label } from '@/components/ui/Label';
 import { ArrowLeft, LineChart } from 'lucide-react';
+import { useT } from '@/lib/i18n';
 
 interface SimResult {
   paths: number[][];
@@ -57,6 +59,7 @@ function gbm_paths(s0: number, mu: number, sigma: number, days: number, n_paths:
 
 export function IpoStockSimulator() {
   const { id } = useParams<{ id: string }>();
+  const t = useT();
   const [s0, set_s0] = useState(20);
   const [mu, set_mu] = useState(0.08);
   const [sigma, set_sigma] = useState(0.45);
@@ -77,37 +80,35 @@ export function IpoStockSimulator() {
   return (
     <div className="p-6 space-y-6 max-w-6xl mx-auto">
       <Link to={`/ipo/projects/${id}`}>
-        <Button variant="ghost" size="sm"><ArrowLeft className="h-4 w-4" /> Back to Dashboard</Button>
+        <Button variant="ghost" size="sm"><ArrowLeft className="h-4 w-4" /> {t('common.back_to_dashboard')}</Button>
       </Link>
       <div>
         <h1 className="text-3xl font-bold flex items-center gap-2">
-          <LineChart className="h-8 w-8 text-primary" /> Post-IPO Stock Simulator
+          <LineChart className="h-8 w-8 text-primary" /> {t('sim.title')}
         </h1>
         <p className="text-muted-foreground mt-1">
-          Visualize post-listing price-path scenarios. The Phase-1 preview uses Geometric
-          Brownian Motion entirely client-side; Phase 2 adds GARCH, jump-diffusion, and
-          earnings-driven shocks via the post_ipo agent.
+          {t('sim.subtitle')}
         </p>
       </div>
 
       <Card>
         <CardHeader>
-          <CardTitle>Inputs</CardTitle>
-          <CardDescription>Adjust IPO price, drift, vol, and horizon.</CardDescription>
+          <CardTitle>{t('sim.inputs.title')}</CardTitle>
+          <CardDescription>{t('sim.inputs.desc')}</CardDescription>
         </CardHeader>
         <CardContent className="grid grid-cols-2 md:grid-cols-5 gap-4">
-          <NumberField label="IPO price (S₀)" value={s0} on_change={set_s0} step={0.5} />
-          <NumberField label="Drift μ (annual)" value={mu} on_change={set_mu} step={0.01} />
-          <NumberField label="Vol σ (annual)" value={sigma} on_change={set_sigma} step={0.05} />
-          <NumberField label="Days" value={days} on_change={(v) => set_days(Math.round(v))} step={21} />
-          <NumberField label="# paths" value={n_paths} on_change={(v) => set_n(Math.round(v))} step={50} />
+          <NumberField label={t('sim.field.s0')}      value={s0}      on_change={set_s0}    step={0.5} />
+          <NumberField label={t('sim.field.mu')}      value={mu}      on_change={set_mu}    step={0.01} />
+          <NumberField label={t('sim.field.sigma')}   value={sigma}   on_change={set_sigma} step={0.05} />
+          <NumberField label={t('sim.field.days')}    value={days}    on_change={(v) => set_days(Math.round(v))} step={21} />
+          <NumberField label={t('sim.field.n_paths')} value={n_paths} on_change={(v) => set_n(Math.round(v))}    step={50} />
         </CardContent>
       </Card>
 
       <Card>
         <CardHeader>
-          <CardTitle>Simulated Price Paths</CardTitle>
-          <CardDescription>P10 / P50 / P90 envelope over {n_paths} GBM paths.</CardDescription>
+          <CardTitle>{t('sim.chart.title')}</CardTitle>
+          <CardDescription>{t('sim.chart.desc', { n: n_paths })}</CardDescription>
         </CardHeader>
         <CardContent>
           <svg viewBox={`0 0 ${W} ${H}`} className="w-full border rounded bg-muted/20">
@@ -120,14 +121,14 @@ export function IpoStockSimulator() {
             <path d={to_path(result.p90)} fill="none" stroke="#22c55e" strokeWidth={2} strokeDasharray="4 4" />
           </svg>
           <div className="mt-3 text-xs flex gap-4">
-            <span><span className="inline-block w-3 h-1 align-middle bg-red-500" /> P10 downside</span>
-            <span><span className="inline-block w-3 h-1 align-middle bg-blue-500" /> Median</span>
-            <span><span className="inline-block w-3 h-1 align-middle bg-green-500" /> P90 upside</span>
+            <span><span className="inline-block w-3 h-1 align-middle bg-red-500" /> {t('sim.legend.p10')}</span>
+            <span><span className="inline-block w-3 h-1 align-middle bg-blue-500" /> {t('sim.legend.p50')}</span>
+            <span><span className="inline-block w-3 h-1 align-middle bg-green-500" /> {t('sim.legend.p90')}</span>
           </div>
           <div className="mt-4 grid grid-cols-3 gap-4 text-sm">
-            <Stat label="Day-end Median" value={`$${result.p50[days].toFixed(2)}`} />
-            <Stat label="P10 (downside)" value={`$${result.p10[days].toFixed(2)}`} />
-            <Stat label="P90 (upside)" value={`$${result.p90[days].toFixed(2)}`} />
+            <Stat label={t('sim.stat.median')} value={`$${result.p50[days].toFixed(2)}`} />
+            <Stat label={t('sim.stat.p10')}    value={`$${result.p10[days].toFixed(2)}`} />
+            <Stat label={t('sim.stat.p90')}    value={`$${result.p90[days].toFixed(2)}`} />
           </div>
         </CardContent>
       </Card>

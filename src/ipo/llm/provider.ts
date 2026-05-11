@@ -58,6 +58,29 @@ export interface ProviderHealth {
 }
 
 /**
+ * One model entry returned by `list_models()`. Different providers expose
+ * wildly different metadata; we normalize to a small useful surface and keep
+ * the original payload in `raw` for debugging.
+ */
+export interface ModelInfo {
+  id: string;                                 // e.g. 'gpt-4o-mini'
+  display_name?: string;                      // human label when provider supplies one
+  family?: string;                            // e.g. 'gpt-4o', 'claude-3-5', 'deepseek-v3'
+  capability: 'chat' | 'embedding' | 'image' | 'audio' | 'rerank' | 'unknown';
+  context_window?: number | null;
+  owned_by?: string | null;
+  created_at?: string | null;
+  raw?: unknown;
+}
+
+export interface ListModelsResponse {
+  provider: AiProviderCode;
+  count: number;
+  models: ModelInfo[];
+  fetched_at: string;
+}
+
+/**
  * The contract every concrete provider must implement.
  */
 export interface LlmProvider {
@@ -72,6 +95,9 @@ export interface LlmProvider {
   embed(req: EmbeddingRequest): Promise<EmbeddingResponse>;
 
   health_check(): Promise<ProviderHealth>;
+
+  /** List available models. Throws ProviderError if not supported / auth fails. */
+  list_models(): Promise<ListModelsResponse>;
 }
 
 /**

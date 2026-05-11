@@ -2,7 +2,12 @@
 // description: IPOPilot-specific API client. Wraps the /api/ipo/* endpoints
 //              exposed by the backend in a typed surface for React Query.
 
-const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:9100';
+// In dev (vite), use a relative base so requests go through the vite proxy
+// (defined in dashboard/vite.config.ts), which is the only safe path when the
+// dashboard is served from a sandbox/public URL — the browser cannot reach
+// `http://localhost:9100` directly. Set VITE_API_URL only for production builds
+// that point to a deployed backend.
+const BASE_URL = import.meta.env.VITE_API_URL || '';
 
 function get_headers(): HeadersInit {
   const token = localStorage.getItem('clawkeeper_token');
@@ -126,13 +131,21 @@ export interface DashboardPayload {
 export interface IpoAgentCatalogItem {
   id: string;
   display_name: string;
+  display_name_zh: string;
   tier: string;
   category: string;
   description: string;
+  description_zh: string;
   capabilities: string[];
   citation_required: boolean;
   required_signoff_for_outputs: string[];
   has_skill_files: boolean;
+  knowledge_acquisition: {
+    discovery_method: 'llm_curated' | 'static_curated' | 'rag_only';
+    jurisdictions: string[];
+    scope_in: string[];
+    scope_out: string[];
+  } | null;
 }
 
 export interface AgentSkillBundle {
@@ -194,6 +207,52 @@ export interface ProviderLiveStatus {
   default_embedding_model: string | null;
   base_url_redacted: string;
   registered_at: string;
+}
+
+export interface ModelInfo {
+  id: string;
+  display_name?: string;
+  family?: string;
+  capability: 'chat' | 'embedding' | 'image' | 'audio' | 'rerank' | 'unknown';
+  context_window?: number | null;
+  owned_by?: string | null;
+  created_at?: string | null;
+}
+
+export interface ListModelsResponse {
+  provider: 'TOKENHOT' | 'OPENAI' | 'ANTHROPIC' | 'DEEPSEEK';
+  count: number;
+  models: ModelInfo[];
+  fetched_at: string;
+}
+
+export interface AgentRunRequest {
+  prompt: string;
+  locale?: 'en' | 'zh';
+  context?: string;
+  provider_code?: 'TOKENHOT' | 'OPENAI' | 'ANTHROPIC' | 'DEEPSEEK';
+  model?: string;
+  temperature?: number;
+  max_tokens?: number;
+}
+
+export interface AgentRunResult {
+  agent_id: string;
+  agent_display_name: string;
+  agent_display_name_zh: string;
+  tier: string;
+  category: string;
+  provider: 'TOKENHOT' | 'OPENAI' | 'ANTHROPIC' | 'DEEPSEEK' | 'NONE';
+  model: string;
+  mode: 'live' | 'dry_run';
+  output: string;
+  finish_reason: string;
+  usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
+  citation_required: boolean;
+  required_signoffs: string[];
+  warnings: string[];
+  ms_elapsed: number;
+  started_at: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -259,6 +318,16 @@ export const ipo_api = {
     fetch_json('/api/ipo/providers/default', { method: 'POST', body: JSON.stringify({ code }) }),
   health_check_providers: () =>
     fetch_json('/api/ipo/providers/health', { method: 'POST' }),
+  list_provider_models: (code: 'TOKENHOT' | 'OPENAI' | 'ANTHROPIC' | 'DEEPSEEK') =>
+    fetch_json<ListModelsResponse>(`/api/ipo/providers/${code}/models`),
+  probe_provider_models: (cfg: {
+    code: 'TOKENHOT' | 'OPENAI' | 'ANTHROPIC' | 'DEEPSEEK';
+    api_key: string;
+    base_url?: string;
+  }) => fetch_json<ListModelsResponse>('/api/ipo/providers/probe-models', {
+    method: 'POST',
+    body: JSON.stringify(cfg),
+  }),
 
   // Agents
   list_agents: (filters?: { tier?: string; category?: string }) => {
@@ -270,6 +339,11 @@ export const ipo_api = {
   get_agent: (id: string) => fetch_json<{ agent: IpoAgentCatalogItem }>(`/api/ipo/agents/${id}`),
   get_agent_bundle: (id: string) => fetch_json<AgentSkillBundle>(`/api/ipo/agents/${id}/bundle`),
   get_skill_coverage: () => fetch_json<SkillCoverageReport>('/api/ipo/agents/coverage'),
+  run_agent: (id: string, body: AgentRunRequest) =>
+    fetch_json<{ ok: true; result: AgentRunResult }>(`/api/ipo/agents/${id}/run`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
 };
 
 // ---------------------------------------------------------------------------

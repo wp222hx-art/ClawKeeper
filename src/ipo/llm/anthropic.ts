@@ -13,6 +13,7 @@ import {
   type EmbeddingResponse,
   type ProviderHealth,
   type ProviderConfig,
+  type ListModelsResponse,
   ProviderError,
 } from './provider';
 
@@ -123,5 +124,48 @@ export class AnthropicProvider implements LlmProvider {
         error: e instanceof Error ? e.message : String(e),
       };
     }
+  }
+
+  /**
+   * Anthropic exposes /v1/models since 2024-09. Each entry has
+   * `{ type, id, display_name, created_at }`. We treat them all as chat
+   * models (Anthropic doesn't ship embedding/image models on this surface).
+   */
+  async list_models(): Promise<ListModelsResponse> {
+    const url = `${this.base_url}/models`;
+    const resp = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'x-api-key': this.api_key,
+        'anthropic-version': this.api_version,
+      },
+    });
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => '');
+      throw new ProviderError(this.code, resp.status, `list_models HTTP ${resp.status}: ${text.slice(0, 500)}`);
+    }
+    const json = (await resp.json()) as {
+      data?: Array<{ id: string; display_name?: string; created_at?: string; type?: string }>;
+    };
+    const models = (json.data ?? []).map((m) => ({
+      id: m.id,
+      display_name: m.display_name ?? m.id,
+      family: m.id.toLowerCase().includes('claude-3-5') ? 'claude-3-5'
+            : m.id.toLowerCase().includes('claude-3-7') ? 'claude-3-7'
+            : m.id.toLowerCase().includes('claude-3') ? 'claude-3'
+            : m.id.toLowerCase().includes('claude-4') ? 'claude-4'
+            : 'claude',
+      capability: 'chat' as const,
+      context_window: null,
+      owned_by: 'anthropic',
+      created_at: m.created_at ?? null,
+      raw: m,
+    }));
+    return {
+      provider: this.code,
+      count: models.length,
+      models,
+      fetched_at: new Date().toISOString(),
+    };
   }
 }

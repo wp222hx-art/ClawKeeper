@@ -1,7 +1,7 @@
 // file: dashboard/src/pages/ipo/NewProjectWizard.tsx
 // description: Three-step wizard to create a new IPO project — Market →
 //              Industry → Company details. After submission, redirects to the
-//              new project's dashboard.
+//              new project's dashboard. Fully localized via the i18n layer.
 
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -14,13 +14,12 @@ import { Textarea } from '@/components/ui/Textarea';
 import { ArrowLeft, ArrowRight, Loader2 } from 'lucide-react';
 import {
   ipo_api,
-  MARKET_LABELS,
-  INDUSTRY_LABELS,
   type CreateProjectInput,
   type TargetMarket,
   type Industry,
   type ListingStructure,
 } from '@/lib/ipo-api';
+import { useT, useMarketLabel, useIndustryLabel, useStructureLabel } from '@/lib/i18n';
 
 const MARKETS: TargetMarket[] = [
   'SEC_NASDAQ_GS', 'SEC_NASDAQ_GM', 'SEC_NASDAQ_CM',
@@ -37,6 +36,10 @@ const STRUCTURES: ListingStructure[] = [
 
 export function IpoNewProjectWizard() {
   const navigate = useNavigate();
+  const t = useT();
+  const market_label = useMarketLabel();
+  const industry_label = useIndustryLabel();
+  const structure_label = useStructureLabel();
   const [step, set_step] = useState<1 | 2 | 3>(1);
   const [form, set_form] = useState<Partial<CreateProjectInput>>({
     confidentiality_level: 'STANDARD',
@@ -56,15 +59,20 @@ export function IpoNewProjectWizard() {
     create.mutate(form as CreateProjectInput);
   };
 
+  const step_heading =
+    step === 1 ? t('wizard.step1.heading')
+    : step === 2 ? t('wizard.step2.heading')
+    : t('wizard.step3.heading');
+
   return (
     <div className="p-6 max-w-3xl mx-auto space-y-6">
       <div>
         <Button variant="ghost" size="sm" onClick={() => navigate('/ipo/projects')}>
-          <ArrowLeft className="h-4 w-4" /> Back to Projects
+          <ArrowLeft className="h-4 w-4" /> {t('wizard.back_to_projects')}
         </Button>
-        <h1 className="text-3xl font-bold mt-2">New IPO Project</h1>
+        <h1 className="text-3xl font-bold mt-2">{t('wizard.title')}</h1>
         <p className="text-muted-foreground mt-1">
-          Step {step} of 3 — {step === 1 ? 'Target Market' : step === 2 ? 'Industry & Structure' : 'Company Details'}
+          {t('wizard.step_of', { current: step, total: 3 })} — {step_heading}
         </p>
       </div>
 
@@ -80,8 +88,8 @@ export function IpoNewProjectWizard() {
       {step === 1 && (
         <Card>
           <CardHeader>
-            <CardTitle>Where will the company list?</CardTitle>
-            <CardDescription>Pick the primary listing venue. Dual-listing can be configured later.</CardDescription>
+            <CardTitle>{t('wizard.step1.title')}</CardTitle>
+            <CardDescription>{t('wizard.step1.desc')}</CardDescription>
           </CardHeader>
           <CardContent className="space-y-2">
             {MARKETS.map(m => (
@@ -93,10 +101,11 @@ export function IpoNewProjectWizard() {
                   form.target_market === m ? 'border-primary bg-primary/5' : 'hover:bg-accent'
                 }`}
               >
-                <div className="font-medium">{MARKET_LABELS[m]}</div>
+                <div className="font-medium">{market_label(m)}</div>
                 <div className="text-xs text-muted-foreground mt-1">
-                  {m.startsWith('SEC') ? 'United States — SEC filings (S-1 / F-1), Reg S-K / S-X, SOX 404'
-                    : 'Hong Kong — HKEX listing rules, Sponsor regime, App.27 ESG'}
+                  {m.startsWith('SEC')
+                    ? t('market.subtitle.sec')
+                    : t('market.subtitle.hkex')}
                 </div>
               </button>
             ))}
@@ -107,8 +116,8 @@ export function IpoNewProjectWizard() {
       {step === 2 && (
         <Card>
           <CardHeader>
-            <CardTitle>What does the company do?</CardTitle>
-            <CardDescription>Industry drives which sector specialist agents activate.</CardDescription>
+            <CardTitle>{t('wizard.step2.title')}</CardTitle>
+            <CardDescription>{t('wizard.step2.desc')}</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="grid grid-cols-2 gap-2">
@@ -121,23 +130,23 @@ export function IpoNewProjectWizard() {
                     form.industry === i ? 'border-primary bg-primary/5' : 'hover:bg-accent'
                   }`}
                 >
-                  <div className="font-medium">{INDUSTRY_LABELS[i]}</div>
+                  <div className="font-medium">{industry_label(i)}</div>
                 </button>
               ))}
             </div>
 
             <div>
-              <Label htmlFor="industry_subcategory">Subcategory (optional)</Label>
+              <Label htmlFor="industry_subcategory">{t('wizard.field.subcategory')}</Label>
               <Input
                 id="industry_subcategory"
-                placeholder="e.g. Vertical SaaS / Solar EPC / Clinical-stage Oncology"
+                placeholder={t('wizard.field.subcategory.ph')}
                 value={form.industry_subcategory ?? ''}
                 onChange={(e) => set_form(f => ({ ...f, industry_subcategory: e.target.value || undefined }))}
               />
             </div>
 
             <div>
-              <Label htmlFor="listing_structure">Listing Structure (optional)</Label>
+              <Label htmlFor="listing_structure">{t('wizard.field.structure')}</Label>
               <select
                 id="listing_structure"
                 className="w-full h-10 px-3 rounded-md border border-input bg-background"
@@ -147,8 +156,8 @@ export function IpoNewProjectWizard() {
                   listing_structure: (e.target.value || undefined) as ListingStructure | undefined,
                 }))}
               >
-                <option value="">— Select —</option>
-                {STRUCTURES.map(s => <option key={s} value={s}>{s}</option>)}
+                <option value="">{t('wizard.field.structure.select')}</option>
+                {STRUCTURES.map(s => <option key={s} value={s}>{structure_label(s)}</option>)}
               </select>
             </div>
           </CardContent>
@@ -158,34 +167,34 @@ export function IpoNewProjectWizard() {
       {step === 3 && (
         <Card>
           <CardHeader>
-            <CardTitle>Company details</CardTitle>
-            <CardDescription>You can edit any of these later.</CardDescription>
+            <CardTitle>{t('wizard.step3.title')}</CardTitle>
+            <CardDescription>{t('wizard.step3.desc')}</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div>
-              <Label htmlFor="company_legal_name">Company legal name *</Label>
+              <Label htmlFor="company_legal_name">{t('wizard.field.legal_name')}</Label>
               <Input
                 id="company_legal_name"
-                placeholder="Acme Holdings Ltd."
+                placeholder={t('wizard.field.legal_name.ph')}
                 value={form.company_legal_name ?? ''}
                 onChange={(e) => set_form(f => ({ ...f, company_legal_name: e.target.value }))}
               />
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <Label htmlFor="company_short_name">Short name</Label>
+                <Label htmlFor="company_short_name">{t('wizard.field.short_name')}</Label>
                 <Input
                   id="company_short_name"
-                  placeholder="Acme"
+                  placeholder={t('wizard.field.short_name.ph')}
                   value={form.company_short_name ?? ''}
                   onChange={(e) => set_form(f => ({ ...f, company_short_name: e.target.value || undefined }))}
                 />
               </div>
               <div>
-                <Label htmlFor="proposed_ticker">Proposed ticker</Label>
+                <Label htmlFor="proposed_ticker">{t('wizard.field.ticker')}</Label>
                 <Input
                   id="proposed_ticker"
-                  placeholder="ACME"
+                  placeholder={t('wizard.field.ticker.ph')}
                   value={form.proposed_ticker ?? ''}
                   onChange={(e) => set_form(f => ({ ...f, proposed_ticker: e.target.value || undefined }))}
                 />
@@ -193,16 +202,16 @@ export function IpoNewProjectWizard() {
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <Label htmlFor="company_jurisdiction">Incorporation jurisdiction</Label>
+                <Label htmlFor="company_jurisdiction">{t('wizard.field.jurisdiction')}</Label>
                 <Input
                   id="company_jurisdiction"
-                  placeholder="Cayman / Delaware / Hong Kong"
+                  placeholder={t('wizard.field.jurisdiction.ph')}
                   value={form.company_jurisdiction ?? ''}
                   onChange={(e) => set_form(f => ({ ...f, company_jurisdiction: e.target.value || undefined }))}
                 />
               </div>
               <div>
-                <Label htmlFor="target_listing_date">Target listing date</Label>
+                <Label htmlFor="target_listing_date">{t('wizard.field.target_date')}</Label>
                 <Input
                   id="target_listing_date"
                   type="date"
@@ -212,16 +221,16 @@ export function IpoNewProjectWizard() {
               </div>
             </div>
             <div>
-              <Label htmlFor="primary_advisor_firm">Primary advisor firm</Label>
+              <Label htmlFor="primary_advisor_firm">{t('wizard.field.advisor')}</Label>
               <Input
                 id="primary_advisor_firm"
-                placeholder="Big-4 audit / sponsor name"
+                placeholder={t('wizard.field.advisor.ph')}
                 value={form.primary_advisor_firm ?? ''}
                 onChange={(e) => set_form(f => ({ ...f, primary_advisor_firm: e.target.value || undefined }))}
               />
             </div>
             <div>
-              <Label htmlFor="company_description">Company description</Label>
+              <Label htmlFor="company_description">{t('wizard.field.description')}</Label>
               <Textarea
                 id="company_description"
                 rows={3}
@@ -235,7 +244,7 @@ export function IpoNewProjectWizard() {
 
       {create.error && (
         <div className="text-sm text-destructive">
-          Failed to create project: {(create.error as Error).message}
+          {t('wizard.error.failed')} {(create.error as Error).message}
         </div>
       )}
 
@@ -245,7 +254,7 @@ export function IpoNewProjectWizard() {
           onClick={() => set_step(s => (s > 1 ? ((s - 1) as 1 | 2 | 3) : s))}
           disabled={step === 1}
         >
-          <ArrowLeft className="h-4 w-4" /> Back
+          <ArrowLeft className="h-4 w-4" /> {t('common.back')}
         </Button>
 
         {step < 3 ? (
@@ -253,12 +262,12 @@ export function IpoNewProjectWizard() {
             onClick={() => set_step(s => ((s + 1) as 1 | 2 | 3))}
             disabled={(step === 1 && !can_advance_1) || (step === 2 && !can_advance_2)}
           >
-            Next <ArrowRight className="h-4 w-4" />
+            {t('wizard.btn.next')} <ArrowRight className="h-4 w-4" />
           </Button>
         ) : (
           <Button onClick={submit} disabled={!can_submit || create.isPending}>
             {create.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
-            Create Project
+            {t('wizard.btn.create')}
           </Button>
         )}
       </div>

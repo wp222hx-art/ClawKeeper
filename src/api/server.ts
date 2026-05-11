@@ -24,6 +24,7 @@ import { create_ipo_signoff_routes } from './routes/ipo_signoffs';
 import { create_ipo_regulation_routes } from './routes/ipo_regulations';
 import { create_ipo_provider_routes } from './routes/ipo_providers';
 import { create_ipo_agent_routes } from './routes/ipo_agents';
+import { create_ipo_legal_routes } from './routes/ipo_legal';
 import { llm_provider_registry } from '../ipo/llm/registry';
 import type { AppEnv } from '../types/hono';
 
@@ -129,6 +130,7 @@ app.route('/api/ipo/signoffs', create_ipo_signoff_routes(sql));
 app.route('/api/ipo/regulations', create_ipo_regulation_routes(sql));
 app.route('/api/ipo/providers', create_ipo_provider_routes(sql));
 app.route('/api/ipo/agents', create_ipo_agent_routes(sql));
+app.route('/api/ipo/legal', create_ipo_legal_routes(sql));
 
 // WebSocket endpoint (NOT IMPLEMENTED)
 app.get('/ws', (c) => {

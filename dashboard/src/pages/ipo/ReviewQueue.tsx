@@ -2,6 +2,7 @@
 // description: Review Queue — pending signoffs across the project, where
 //              licensed humans (lawyer / auditor / CFO / sponsor) approve or
 //              reject AI-drafted artifacts before they can be marked final.
+//              Localized via i18n.
 
 import { useParams, Link } from 'react-router-dom';
 import { useState } from 'react';
@@ -12,9 +13,11 @@ import { Badge } from '@/components/ui/Badge';
 import { Textarea } from '@/components/ui/Textarea';
 import { ArrowLeft, ShieldCheck, ThumbsUp, ThumbsDown } from 'lucide-react';
 import { ipo_api } from '@/lib/ipo-api';
+import { useT } from '@/lib/i18n';
 
 export function IpoReviewQueue() {
   const { id } = useParams<{ id: string }>();
+  const t = useT();
   const qc = useQueryClient();
   const [notes, set_notes] = useState<Record<string, string>>({});
 
@@ -33,38 +36,36 @@ export function IpoReviewQueue() {
   return (
     <div className="p-6 space-y-6 max-w-5xl mx-auto">
       <Link to={`/ipo/projects/${id}`}>
-        <Button variant="ghost" size="sm"><ArrowLeft className="h-4 w-4" /> Back to Dashboard</Button>
+        <Button variant="ghost" size="sm"><ArrowLeft className="h-4 w-4" /> {t('common.back_to_dashboard')}</Button>
       </Link>
       <div>
         <h1 className="text-3xl font-bold flex items-center gap-2">
-          <ShieldCheck className="h-8 w-8 text-primary" /> Review Queue
+          <ShieldCheck className="h-8 w-8 text-primary" /> {t('review.title')}
         </h1>
         <p className="text-muted-foreground mt-1">
-          AI-drafted artifacts awaiting human sign-off. The database
+          {t('review.subtitle.prefix')}
           <code className="mx-1 px-1 bg-muted rounded text-xs">enforce_signoff_gate</code>
-          trigger blocks any document from being marked final without all required role approvals.
+          {t('review.subtitle.suffix')}
         </p>
       </div>
 
       <Card className="border-primary/30 bg-primary/5">
         <CardContent className="p-4 text-sm">
-          <strong>AI Co-Pilot mode:</strong> AI drafts are <em>recommendations</em>.
-          Your professional sign-off is the regulatory record of authorship.
+          <strong>{t('review.copilot.title')}</strong> {t('review.copilot.desc')}
         </CardContent>
       </Card>
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-lg">Pending Signoffs ({data?.count ?? 0})</CardTitle>
+          <CardTitle className="text-lg">{t('review.pending.title', { n: data?.count ?? 0 })}</CardTitle>
           <CardDescription>
-            Approve to allow document finalization. Reject to send the artifact back to the
-            originating workstream with your notes attached.
+            {t('review.pending.desc')}
           </CardDescription>
         </CardHeader>
         <CardContent>
-          {isLoading && <p className="text-sm text-muted-foreground">Loading…</p>}
+          {isLoading && <p className="text-sm text-muted-foreground">{t('common.loading')}</p>}
           {data && data.signoffs.length === 0 && (
-            <p className="text-sm text-muted-foreground">No pending signoffs. New requests will appear here.</p>
+            <p className="text-sm text-muted-foreground">{t('review.empty')}</p>
           )}
           {data && data.signoffs.length > 0 && (
             <ul className="space-y-3">
@@ -76,7 +77,7 @@ export function IpoReviewQueue() {
                       <div className="flex items-center gap-2">
                         <Badge>{so.reviewer_role}</Badge>
                         <span className="text-xs text-muted-foreground">
-                          Document <code className="bg-muted px-1 rounded">{(so.document_id ?? '').slice(0, 8)}</code>
+                          {t('review.document_label')} <code className="bg-muted px-1 rounded">{(so.document_id ?? '').slice(0, 8)}</code>
                         </span>
                       </div>
                       <span className="text-xs text-muted-foreground">
@@ -85,7 +86,7 @@ export function IpoReviewQueue() {
                     </div>
                     <Textarea
                       rows={2}
-                      placeholder="Notes (optional)…"
+                      placeholder={t('review.notes.ph')}
                       value={notes[so.id] ?? ''}
                       onChange={(e) => set_notes(n => ({ ...n, [so.id]: e.target.value }))}
                       className="mb-2"
@@ -97,14 +98,14 @@ export function IpoReviewQueue() {
                         onClick={() => decide.mutate({ signoff_id: so.id, status: 'REJECTED', n: notes[so.id] })}
                         disabled={decide.isPending}
                       >
-                        <ThumbsDown className="h-4 w-4" /> Reject
+                        <ThumbsDown className="h-4 w-4" /> {t('review.btn.reject')}
                       </Button>
                       <Button
                         size="sm"
                         onClick={() => decide.mutate({ signoff_id: so.id, status: 'APPROVED', n: notes[so.id] })}
                         disabled={decide.isPending}
                       >
-                        <ThumbsUp className="h-4 w-4" /> Approve
+                        <ThumbsUp className="h-4 w-4" /> {t('review.btn.approve')}
                       </Button>
                     </div>
                   </li>
