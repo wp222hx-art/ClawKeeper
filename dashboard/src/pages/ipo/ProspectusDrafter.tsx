@@ -90,15 +90,20 @@ export function IpoProspectusDrafter() {
       const section_label = t(s.name_key);
       const venue_label = market_label(target_market);
       const prompt = locale === 'zh'
-        ? `请为 IPO 项目 ${id} 起草招股说明书的「${section_label}」章节。\n\n上市地：${venue_label}（${target_market}）\n监管引用：${s.ref}\n\n你必须严格遵守上方「格式标准（强制约束）」中列出的所有要求：必备子节标题、必备要素、强制披露语句、字数要求与引用要求。如果缺少公司具体数据，请用合理示例数据填充并明确标注「[示例]」；不可虚构关键披露事实。最后必须附带 \`\`\`json 合规信封，由我们的 PFS 校验器读取。`
-        : `Draft the "${section_label}" section of the prospectus for IPO project ${id}.\n\nVenue: ${venue_label} (${target_market})\nRegulatory anchor: ${s.ref}\n\nYou MUST strictly conform to the "Format Standard (binding)" block above: produce every required subheading in order, cover every required element, include the mandatory disclosure language, hit the word-count band, and cite the listed authorities. Where concrete company data is missing, fill with reasonable examples clearly marked "[example]" — do NOT fabricate key disclosure facts. End with the \`\`\`json compliance envelope so the PFS linter can score it.`;
+        ? `请为 IPO 项目 ${id} 起草招股说明书的「${section_label}」章节。\n\n上市地：${venue_label}（${target_market}）\n监管引用：${s.ref}\n\n你必须严格遵守上方「格式标准（强制约束）」中列出的所有要求：必备子节标题、必备要素、强制披露语句、字数要求与引用要求。如果缺少公司具体数据，请用合理示例数据填充并明确标注「[示例]」；不可虚构关键披露事实。\n\n⚠️ Token 预算分配（硬性要求）：\n1. 你的总输出预算约为 12000 token。\n2. 必须为末尾的 \`\`\`json 合规信封预留至少 600 token，信封不可省略。\n3. 如果正文预算紧张，请压缩每条要素的描述长度，但禁止删减必备子节标题或必备要素。\n4. 写完正文后立即输出 \`\`\`json 信封，不要任何客套话。\n\n输出顺序：Markdown 章节正文（按必备子节标题分节）→ 空行 → \`\`\`json 信封 → \`\`\` 结束。`
+        : `Draft the "${section_label}" section of the prospectus for IPO project ${id}.\n\nVenue: ${venue_label} (${target_market})\nRegulatory anchor: ${s.ref}\n\nYou MUST strictly conform to the "Format Standard (binding)" block above: produce every required subheading in order, cover every required element, include the mandatory disclosure language, hit the word-count band, and cite the listed authorities. Where concrete company data is missing, fill with reasonable examples clearly marked "[example]" — do NOT fabricate key disclosure facts.\n\n⚠️ Token budget allocation (hard requirement):\n1. Your total output budget is ~12000 tokens.\n2. You MUST reserve at least 600 tokens at the very end for the \`\`\`json compliance envelope. The envelope is non-optional and is parsed by the PFS linter.\n3. If the body budget is tight, compress per-element prose — but NEVER drop a required subheading or required element.\n4. Immediately after the body, emit the \`\`\`json envelope. No closing pleasantries.\n\nOutput order: Markdown body (under the required subheadings) → blank line → \`\`\`json envelope → closing \`\`\`.`;
       const { result } = await ipo_api.run_agent(s.agent_id, {
         prompt,
         locale,
         target_market,
         prospectus_section: s.code,
-        // Give the model enough room for a long-form section.
-        max_tokens: 4000,
+        // Long-form sections (risk_factors, mdna, business) need ~6000-25000
+        // words to satisfy the PFS word-count band. 12000 tokens gives the
+        // model headroom for ~7000-8000 words of body PLUS the mandatory JSON
+        // compliance envelope at the end (which the linter parses for score).
+        // The prompt also explicitly reserves >=600 tokens for the envelope so
+        // the model doesn't blow its budget on prose and drop the envelope.
+        max_tokens: 12000,
       });
       set_runs(r => ({ ...r, [key]: { loading: false, result } }));
     } catch (e) {
