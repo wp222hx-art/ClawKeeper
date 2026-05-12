@@ -881,7 +881,406 @@ const STOCK_SIM_PRESETS: PresetTemplate[] = [
 ];
 
 // ---------------------------------------------------------------------------
-// Master registry — Batch 1 only for now (Batches 2-4 to follow)
+// BATCH 2 — SEC-specific agents (17)
+// Six remaining sec_* agents + SEC-leaning agents from disclosure / legal /
+// tax / post-IPO categories whose regulatory anchors are dominantly US.
+// Each preset is fanned out across all 5 SEC venues × 2 locales.
+// ---------------------------------------------------------------------------
+
+interface SecOnlyPresetSpec {
+  agent_id: string;
+  task_en: string;
+  task_zh: string;
+  focus_en: string;
+  focus_zh: string;
+  /** Extra clauses beyond SEC_GLOBAL_CLAUSES_*. */
+  extra_clauses_en: string[];
+  extra_clauses_zh: string[];
+  /** Suggested max_tokens for this work product. */
+  suggested_max_tokens?: number;
+  /** Optional PFS binding (only set for prospectus-touching agents). */
+  prospectus_section?: string;
+}
+
+const SEC_ONLY_SPECS: SecOnlyPresetSpec[] = [
+  // ---- 6 remaining sec_* agents (sec_s1_drafter / sec_comment_responder already in Batch 1) ----
+  {
+    agent_id: 'sec_regsk_checker',
+    task_en: 'Audit the prospectus draft against every Reg S-K item: identify which items are present, which are short on required content / formatting / look-back-period, and which are missing entirely. Produce an item-by-item compliance matrix.',
+    task_zh: '对照 Reg S-K 全部条目核查招股书草稿：识别哪些条目已具备、哪些内容 / 格式 / 回溯期不足、哪些完全缺失。产出逐项合规矩阵。',
+    focus_en: 'Each row: Item # → Required content → Status (Pass / Partial / Missing) → Cited evidence (page / section) → Remediation owner.',
+    focus_zh: '每行：项目编号 → 必备内容 → 状态（合格 / 部分合规 / 缺失）→ 引用证据（页码 / 章节）→ 整改负责人。',
+    extra_clauses_en: [
+      'Reg S-K Items 101 (Business), 103 (Legal Proceedings), 105 (Risk Factors), 303 (MD&A), 402 (Executive Compensation), 404 (Related-Party), 503-505 (Front-end disclosures).',
+      'Apply the Smaller Reporting Company / EGC scaled-disclosure adjustments where the issuer qualifies.',
+    ],
+    extra_clauses_zh: [
+      'Reg S-K 第 101 项（业务）、第 103 项（法律程序）、第 105 项（风险因素）、第 303 项（MD&A）、第 402 项（高管薪酬）、第 404 项（关联交易）、第 503-505 项（卷首披露）。',
+      '若发行人符合 Smaller Reporting Company / EGC 标准，适用相应的简化披露规则。',
+    ],
+    suggested_max_tokens: 6000,
+  },
+  {
+    agent_id: 'sec_sox_advisor',
+    task_en: 'Build the SOX 302 / 404(a) / 404(b) compliance roadmap: control-deficiency inventory, remediation owners, target dates, and the trigger calendar for when 404(b) auditor attestation kicks in (post-EGC transition expiry or accelerated-filer threshold).',
+    task_zh: '构建 SOX 302 / 404(a) / 404(b) 合规路线图：控制缺陷清单、整改负责人、目标日期，以及 404(b) 审计师鉴证义务启动的触发日历（EGC 过渡期满或达到加速申报人门槛）。',
+    focus_en: 'For pre-IPO and EGC-eligible issuers, sequence remediation so 302 / 404(a) cert is solid by S-1 effectiveness and 404(b) is ready by the trigger date.',
+    focus_zh: '对 IPO 前 / EGC 资格发行人，安排整改顺序，使 302 / 404(a) 认证在 S-1 生效时即稳固，404(b) 在触发日前就绪。',
+    extra_clauses_en: [
+      'SOX §302 (CEO/CFO certification), §404(a) (management ICFR assessment), §404(b) (auditor attestation, deferred for EGC under JOBS Act §103).',
+      'JOBS Act §101 EGC five-year transition; loss of EGC upon any of (>$1.235B revenue) / (>$700M public float) / (>$1B 3-yr non-convertible debt) / 5th anniversary.',
+      'Accelerated / Large Accelerated Filer thresholds: Reg S-K Rule 12b-2 ($75M / $700M public float).',
+    ],
+    extra_clauses_zh: [
+      'SOX 第 302 条（CEO/CFO 认证）、第 404(a) 条（管理层 ICFR 评估）、第 404(b) 条（审计师鉴证，依 JOBS Act 第 103 条对 EGC 暂缓）。',
+      'JOBS Act 第 101 条 EGC 五年过渡期；发行人在以下任一情形下丧失 EGC 身份：年收入 >$1.235B、公众持股市值 >$700M、过去 3 年不可转换债发行 >$1B、上市满 5 周年。',
+      '加速申报人 / 大型加速申报人门槛：Reg S-K Rule 12b-2（公众持股市值 $75M / $700M）。',
+    ],
+    suggested_max_tokens: 5000,
+  },
+  {
+    agent_id: 'sec_safe_harbor_checker',
+    task_en: 'Review every forward-looking statement (FLS) in the prospectus / earnings releases / roadshow scripts against the PSLRA safe-harbor checklist. For each FLS produce: identification quote, "meaningful cautionary language" verdict, bad-faith / actual-knowledge risk note, and recommended fix.',
+    task_zh: '依 PSLRA 安全港清单核查招股书 / 业绩发布 / 路演脚本中的每一项前瞻性陈述（FLS）。对每条 FLS 给出：原文引用、"实质性警示语"判定、恶意 / 主观明知风险注记、建议修订。',
+    focus_en: 'Note PSLRA does NOT apply to IPO-stage S-1 statements (15 U.S.C. §78u-5(b)(2)(D)) — flag any safe-harbor reliance attempted in the S-1 itself as ineffective.',
+    focus_zh: '注意 PSLRA 安全港不适用于 IPO 阶段的 S-1 文件（15 U.S.C. §78u-5(b)(2)(D)）—— 对在 S-1 中援引安全港的尝试，须标识为无效。',
+    extra_clauses_en: [
+      'PSLRA safe harbor (15 U.S.C. §78u-5) — written FLS path requires identification + meaningful cautionary statements identifying important factors that could cause actual results to differ.',
+      'Bespeaks-caution doctrine — judicial backstop where PSLRA does not apply.',
+      'Reg G + Reg S-K Item 10(e) — non-GAAP FLS still require GAAP reconciliation where computable.',
+    ],
+    extra_clauses_zh: [
+      'PSLRA 安全港（15 U.S.C. §78u-5）—— 书面 FLS 路径要求"明确标识"+附带"实质性警示语"，警示语须指出可能导致实际结果重大偏离的关键因素。',
+      'Bespeaks-caution（"业经警示"）原则 —— 在 PSLRA 不适用情形下的司法后备。',
+      'Reg G + Reg S-K 第 10(e) 项 —— 即使是非 GAAP 形式的 FLS，可计算时仍须 GAAP 调节。',
+    ],
+    suggested_max_tokens: 5000,
+  },
+  {
+    agent_id: 'sec_pcaob_audit_advisor',
+    task_en: 'Translate the relevant PCAOB Auditing Standards into a concrete, executable pre-IPO audit-prep task list: workpaper templates, evidence requirements, walkthrough scripts, and the timing each task must complete relative to S-1 filing.',
+    task_zh: '将相关 PCAOB 审计准则翻译为可执行的 IPO 前审计准备任务清单：工作底稿模板、证据要求、穿行测试脚本，以及每项任务相对 S-1 申报的完成时点。',
+    focus_en: 'Cover the AS family: AS 2201 ICFR audit, AS 1105 audit evidence, AS 1215 audit documentation, AS 2110 risk assessment, AS 2401 fraud, AS 2315 sampling, AS 1301 communications with audit committee.',
+    focus_zh: '覆盖 AS 体系：AS 2201（ICFR 审计）、AS 1105（审计证据）、AS 1215（审计文档）、AS 2110（风险评估）、AS 2401（舞弊）、AS 2315（抽样）、AS 1301（与审计委员会沟通）。',
+    extra_clauses_en: [
+      'PCAOB AS 2201 — ICFR is required to be audited only for non-EGC accelerated / large accelerated filers; pre-IPO management must still design and operate it.',
+      'PCAOB AS 1215 — workpapers must support every conclusion and be retained 7 years.',
+      'PCAOB QC standards — engagement-quality review by independent partner.',
+    ],
+    extra_clauses_zh: [
+      'PCAOB AS 2201 —— ICFR 审计仅对非 EGC 加速 / 大型加速申报人为强制；IPO 前管理层仍须设计并运行。',
+      'PCAOB AS 1215 —— 工作底稿须支持每项结论，并保管 7 年。',
+      'PCAOB QC 体系 —— 由独立合伙人执行项目质量复核。',
+    ],
+    suggested_max_tokens: 5000,
+  },
+  {
+    agent_id: 'sec_listing_standards_matcher',
+    task_en: 'Match the issuer\'s financials and shareholder profile to the listing standards of the chosen venue. Identify the qualifying path (which test the issuer relies on), measure the headroom on each numerical threshold, and flag any test the issuer fails or barely passes.',
+    task_zh: '将发行人的财务数据与股东构成匹配到所选上市地的上市标准。识别满足条件的路径（采用哪一测试组合）、量化每项数值门槛的余量、标识未通过或勉强通过的测试。',
+    focus_en: 'Output a pass/fail matrix per applicable test (income, equity, market value, total assets, market cap of unrestricted publicly held shares, round-lot holders, public float, bid price, etc.).',
+    focus_zh: '按适用测试逐项输出通过 / 不通过矩阵（净利润、股东权益、市值、总资产、流通股市值、整手持有人数、公众持股比例、最低买入价等）。',
+    extra_clauses_en: [
+      'Nasdaq Listing Rule 5300 series (Global Select), 5400 series (Global Market), 5500 series (Capital Market).',
+      'NYSE Listed Company Manual §102.01 (US companies) / §103.00 (foreign private issuers).',
+      'NYSE American Company Guide §101 — alternative listing standards.',
+      'Continuing-listing standards must be planned for at IPO date — not just initial listing.',
+    ],
+    extra_clauses_zh: [
+      '纳斯达克上市规则 5300 系列（全球精选）、5400 系列（全球市场）、5500 系列（资本市场）。',
+      '纽交所上市公司手册第 102.01 节（美国公司）/ 第 103.00 节（外国私人发行人）。',
+      '纽交所美国市场公司指引第 101 节 —— 备选上市标准。',
+      '持续上市标准须在 IPO 日即纳入规划 —— 不仅仅是初始上市标准。',
+    ],
+    suggested_max_tokens: 5000,
+  },
+  // ---- SEC-leaning disclosure / post-IPO / legal / tax agents ----
+  {
+    agent_id: 'ipo_amendment_planner',
+    task_en: 'Plan which prospectus / S-1 sections need amendment after each comment-letter round. Produce a redline plan with section owners, deadline, and downstream-impact map (e.g. an MD&A change cascading into Risk Factors and Capitalization).',
+    task_zh: '在每轮反馈意见函后规划需修订的招股书 / S-1 章节。产出含章节负责人、截止日、下游影响地图（如 MD&A 修订级联影响风险因素与资本化章节）的红线修订计划。',
+    focus_en: 'Track each comment to its remediation; ensure that revised disclosure complies with Reg S-K item-by-item; keep a version history aligned to S-1/A filings.',
+    focus_zh: '跟踪每条反馈意见到对应整改；确保修订披露逐项符合 Reg S-K；维护与 S-1/A 申报对齐的版本历史。',
+    extra_clauses_en: [
+      'Securities Act Rule 472 — every amendment must be filed; no informal "track changes" delivery.',
+      'Reg S-K Item 512 — undertakings concerning post-effective amendments.',
+      'Coordinate with auditor on consents (Securities Act §7) for every amendment carrying updated financials.',
+    ],
+    extra_clauses_zh: [
+      '《证券法》Rule 472 —— 每次修订均须正式申报，不接受非正式的"留痕"递交。',
+      'Reg S-K 第 512 项 —— 关于生效后修订的承诺。',
+      '凡修订涉及更新财务数据，须与审计师就同意函（《证券法》第 7 条）联动。',
+    ],
+    suggested_max_tokens: 5000,
+  },
+  {
+    agent_id: 'ipo_investor_narrative_drafter',
+    task_en: 'Draft the equity story / roadshow narrative: 60-second elevator pitch, market opportunity, business model, competitive moat, financial trajectory, leadership story. Anchor every claim to the prospectus so roadshow QA cannot drift into Reg FD selective-disclosure territory.',
+    task_zh: '起草股权故事 / 路演叙事：60 秒电梯演讲、市场机会、商业模式、竞争护城河、财务轨迹、领导力故事。每项陈述均锚定到招股书，使路演问答不至于偏离至违反 Reg FD 选择性披露的边界。',
+    focus_en: 'No new material non-public information beyond the prospectus; every superlative must be supportable.',
+    focus_zh: '禁止披露任何超出招股书的重大非公开信息；任何形容词级表述均须有支撑材料。',
+    extra_clauses_en: [
+      'Reg FD (17 CFR 243) — no selective disclosure of material non-public information.',
+      'Section 5 of Securities Act — gun-jumping / written-offer rules during the registration period.',
+      'Section 11 / 12(a)(2) liability extends to written roadshows under Rule 433.',
+    ],
+    extra_clauses_zh: [
+      'Reg FD（17 CFR 243）—— 禁止选择性披露重大非公开信息。',
+      '《证券法》第 5 条 —— 注册期内的"抢跑" / 书面要约规则。',
+      'Rule 433 项下，第 11 条 / 第 12(a)(2) 条责任延伸至书面路演资料。',
+    ],
+    suggested_max_tokens: 5000,
+  },
+  {
+    agent_id: 'ipo_quarterly_filing_assistant',
+    task_en: 'Assist post-IPO 10-Q / 10-K / 6-K / 20-F preparation: roll forward financials, draft MD&A delta versus prior period, surface new / refreshed risk factors, assemble §302 / §906 certifications for officer signature, and check XBRL tagging completeness.',
+    task_zh: '协助上市后 10-Q / 10-K / 6-K / 20-F 编制：滚动财务数据、起草相对上期的 MD&A 增量、识别新增或更新的风险因素、整理高管签署所需的第 302 条 / 第 906 条认证、检查 XBRL 标签完整性。',
+    focus_en: 'Each filing must integrate with the issuer\'s disclosure-controls process and pass the Disclosure Committee review before signing.',
+    focus_zh: '每份申报均须与发行人披露控制流程衔接，并在签署前通过披露委员会复核。',
+    extra_clauses_en: [
+      'Exchange Act §13(a) / §15(d) — periodic-reporting obligations.',
+      'Form 10-Q (Reg S-K + Reg S-X Article 10), Form 10-K (Reg S-K full), Form 6-K (FPI furnishing), Form 20-F (FPI annual).',
+      'SOX §302 (CEO/CFO disclosure-controls cert) / §906 (criminal cert).',
+      'Reg S-T — XBRL / Inline XBRL tagging mandatory; financial-data + cover-page data.',
+    ],
+    extra_clauses_zh: [
+      '《1934 年证券交易法》第 13(a) 条 / 第 15(d) 条 —— 定期报告义务。',
+      'Form 10-Q（Reg S-K + Reg S-X 第 10 条）、Form 10-K（Reg S-K 全套）、Form 6-K（FPI 提交）、Form 20-F（FPI 年报）。',
+      'SOX 第 302 条（CEO/CFO 披露控制认证）/ 第 906 条（刑事认证）。',
+      'Reg S-T —— XBRL / Inline XBRL 标签为强制要求；财务数据 + 封面数据均须标签化。',
+    ],
+    suggested_max_tokens: 5000,
+  },
+  {
+    agent_id: 'ipo_roadshow_qa_simulator',
+    task_en: 'Generate the top-50 most-likely investor questions and rehearsal answers anchored to the prospectus. For each Q produce: question, anchor citation in S-1 / 20-F, rehearsed answer, and a flag if the answer would constitute Reg FD-prohibited new material non-public information.',
+    task_zh: '生成最可能的前 50 个投资者问题及锚定到招股书的预演答复。每条问题输出：问题、S-1 / 20-F 中的引用锚点、预演答复、若答复将构成违反 Reg FD 的新增重大非公开信息则标识警告。',
+    focus_en: 'Cover business model, unit economics, competition, regulation, KPI methodology, controlling-shareholder structure, lock-up overhang, near-term catalysts.',
+    focus_zh: '覆盖商业模式、单位经济、竞争、监管、KPI 方法论、控股股东结构、锁定期供给压力、近期催化事件。',
+    extra_clauses_en: [
+      'Reg FD — selective disclosure prohibition.',
+      'Rule 134 / Rule 433 — what testing-the-waters and written communications are permitted.',
+      'No projections beyond what is in the prospectus may be shared in the roadshow.',
+    ],
+    extra_clauses_zh: [
+      'Reg FD —— 禁止选择性披露。',
+      'Rule 134 / Rule 433 —— 关于"试探市场"与书面沟通的允许范围。',
+      '路演中不得分享超出招股书范围的预测信息。',
+    ],
+    suggested_max_tokens: 5000,
+  },
+  {
+    agent_id: 'ipo_lockup_period_tracker',
+    task_en: 'Track the post-IPO lock-up release calendar (180-day standard, staggered tranches, early-release triggers, top-up rights). For each release date quantify: shares becoming free-tradable, % of free-float pre-release, % post-release, and the supply-overhang risk on share price.',
+    task_zh: '跟踪上市后锁定期解禁日历（180 天标准、分批解禁、提前解禁触发条件、增持权）。对每个解禁日量化：解禁股数、解禁前自由流通股占比、解禁后占比、对股价的供给压力风险。',
+    focus_en: 'Cross-reference with insider-selling Rule 144 manner-of-sale and volume limits.',
+    focus_zh: '与内部人卖出 Rule 144 的方式 / 数量限制交叉勾稽。',
+    extra_clauses_en: [
+      'Rule 144 (17 CFR 230.144) — restricted/control securities resale framework, including Rule 144(e) volume limits and 144(f) manner-of-sale.',
+      'Section 16 — short-swing profits + Form 4 reporting on insider transactions.',
+      'Underwriter standard 180-day lock-up + customary release / waiver provisions.',
+    ],
+    extra_clauses_zh: [
+      'Rule 144（17 CFR 230.144）—— 受限 / 控制证券转售框架，包括 Rule 144(e) 数量限制与 144(f) 方式限制。',
+      '《1934 年证券交易法》第 16 条 —— 短线收益归入 + 内部人交易 Form 4 申报。',
+      '承销商标准 180 天锁定期 + 通常的解禁 / 豁免条款。',
+    ],
+    suggested_max_tokens: 4500,
+  },
+  {
+    agent_id: 'ipo_corporate_governance_advisor',
+    task_en: 'Recommend post-IPO governance architecture: board composition (majority-independent under Nasdaq Rule 5605 / NYSE LCM §303A.01), committee charters (Audit / Comp / Nom & Gov), independence tests, dual-class share guardrails, and any controlled-company exemptions to declare.',
+    task_zh: '推荐上市后治理架构：董事会构成（依纳斯达克 Rule 5605 / 纽交所 LCM §303A.01 要求多数独立董事）、委员会章程（审计 / 薪酬 / 提名与治理）、独立性测试、双重股权架构的保护性安排、以及拟援引的控股公司豁免事项。',
+    focus_en: 'For FPIs that elect home-country governance, list each Nasdaq/NYSE rule the issuer plans to deviate from, with the home-country basis.',
+    focus_zh: '对选择适用本国治理规则的 FPI，逐条列示发行人拟偏离的纳斯达克 / 纽交所规则，并附本国法依据。',
+    extra_clauses_en: [
+      'Nasdaq Rule 5605 (board / committee independence), 5615(a)(3) (controlled-company), 5615(a)(7) (FPI exemption).',
+      'NYSE LCM §303A series (corporate governance) — equivalent independence and committee rules.',
+      'SEC Rule 10A-3 — Audit Committee independence (no exemption available).',
+      'Dual-class structures: Council of Institutional Investors guidance + market expectations on sunset provisions.',
+    ],
+    extra_clauses_zh: [
+      '纳斯达克 Rule 5605（董事 / 委员会独立性）、5615(a)(3)（控股公司）、5615(a)(7)（FPI 豁免）。',
+      '纽交所 LCM 第 303A 系列（公司治理）—— 对应的独立性与委员会规则。',
+      'SEC Rule 10A-3 —— 审计委员会独立性（无豁免）。',
+      '双重股权架构：机构投资者理事会指引 + 市场对日落条款的预期。',
+    ],
+    suggested_max_tokens: 5000,
+  },
+  {
+    agent_id: 'ipo_restructuring_advisor',
+    task_en: 'Advise on US-listed entity structure: Direct US-domiciled IssuerCo vs Cayman / BVI top-co vs VIE (PRC operating co + offshore top-co with control agreements) vs Red-chip. Surface tax (PFIC, GILTI, Subpart F), regulatory (HFCAA, CSRC Trial Measures), and disclosure consequences.',
+    task_zh: '为美股上市主体架构提供建议：美国注册母公司直接上市 vs 开曼 / BVI 母公司 vs VIE（境内运营 + 离岸母公司 + 协议控制）vs 红筹。揭示税务（PFIC、GILTI、Subpart F）、监管（HFCAA、CSRC 备案）、披露后果。',
+    focus_en: 'For PRC-tied issuers, integrate the CSRC Overseas Listing Trial Measures (March 2023) filing pathway and HFCAA / Accelerating HFCAA Act delisting risk.',
+    focus_zh: '对涉及中国境内业务的发行人，纳入 CSRC《境外发行上市备案管理试行办法》（2023 年 3 月）的备案路径，以及 HFCAA / Accelerating HFCAA Act 退市风险。',
+    extra_clauses_en: [
+      'IRC §7874 (anti-inversion), §1297 (PFIC), §951A (GILTI), §951 (Subpart F).',
+      'Holding Foreign Companies Accountable Act (HFCAA) — PCAOB inspection access; status of Accelerating HFCAA Act amendments.',
+      'CSRC Overseas Listing Trial Measures (March 2023) — filing requirement for PRC-tied issuers.',
+      'Securities Act §5 — registration of any new IssuerCo; F-4 if a reorganization is part of the offering.',
+    ],
+    extra_clauses_zh: [
+      'IRC 第 7874 条（反倒置）、第 1297 条（PFIC）、第 951A 条（GILTI）、第 951 条（Subpart F）。',
+      '《外国公司问责法》（HFCAA）—— PCAOB 检查权；及《加速 HFCAA》修正案的进展。',
+      'CSRC《境外发行上市备案管理试行办法》（2023 年 3 月）—— 境内业务发行人的备案要求。',
+      '《证券法》第 5 条 —— 任何新母公司的注册要求；若重组为发行的一部分则需 F-4 表。',
+    ],
+    suggested_max_tokens: 5500,
+  },
+  {
+    agent_id: 'ipo_lockup_clause_analyzer',
+    task_en: 'Analyze the issuer\'s existing investor lock-up clauses (employee shares, founder shares, pre-IPO investors, convertible-note holders) and reconcile them with the underwriter\'s 180-day standard lock-up. Surface any inconsistency, early-release trigger, top-up obligation, or release-day overhang.',
+    task_zh: '分析发行人既有投资者锁定期条款（员工股、创始人股、IPO 前投资者、可转债持有人），与承销商标准 180 天锁定期勾稽。揭示不一致、提前解禁触发条件、增持义务、解禁日供给压力。',
+    focus_en: 'Provide a release-day timeline mapping every shareholder bucket against (lock-up expiry, Rule 144 holding period, S-3 / F-3 resale-shelf availability).',
+    focus_zh: '提供解禁日时间线，将每一股东类别映射到（锁定期解禁、Rule 144 持有期、S-3 / F-3 转售货架是否可用）。',
+    extra_clauses_en: [
+      'Rule 144 holding-period (6m for reporting issuer / 12m otherwise) and Rule 144(e) volume cap.',
+      'Underwriter 180-day standard lock-up; FINRA Rule 5131 prohibits "spinning" releases.',
+      'Section 16(c) short-swing profit recovery for officers/directors/10% holders.',
+    ],
+    extra_clauses_zh: [
+      'Rule 144 持有期（已报告发行人 6 个月 / 其他 12 个月）与 Rule 144(e) 数量上限。',
+      '承销商标准 180 天锁定期；FINRA Rule 5131 禁止"对赌式"解禁安排。',
+      '《1934 年证券交易法》第 16(c) 条 —— 对高管 / 董事 / 10% 持股股东的短线收益归入。',
+    ],
+    suggested_max_tokens: 4500,
+  },
+  {
+    agent_id: 'ipo_cross_border_tax_optimizer',
+    task_en: 'Design / optimize a cross-border tax architecture for the listed group. Minimize dividend / interest / royalty withholding via treaty network; mitigate GILTI / Subpart F for US holders; assess PFIC risk; plan for BEPS Pillar 2 (15% global minimum tax) compliance.',
+    task_zh: '为上市集团设计 / 优化跨境税务架构。通过税收协定网络最小化股息 / 利息 / 特许权使用费预提税；对美国持有人缓释 GILTI / Subpart F；评估 PFIC 风险；规划 BEPS 第二支柱（15% 全球最低税）合规。',
+    focus_en: 'Quantify ETR before/after each restructuring step; present cash-tax bridge.',
+    focus_zh: '量化每一重组步骤前后的有效税率；输出现金税负桥接。',
+    extra_clauses_en: [
+      'IRC §1297-1298 PFIC — passive-asset and passive-income tests for foreign issuers; QEF / mark-to-market elections.',
+      'IRC §951A GILTI / §250 FDII / §59A BEAT.',
+      'OECD BEPS Pillar 2 GloBE Rules — 15% effective minimum tax on jurisdictional ETR.',
+      'Anti-treaty-shopping LOB clauses; PPT under MLI Article 7.',
+    ],
+    extra_clauses_zh: [
+      'IRC 第 1297-1298 条 PFIC —— 对外国发行人的被动资产 / 被动收入测试；QEF / 按市场计价选择。',
+      'IRC 第 951A 条 GILTI / 第 250 条 FDII / 第 59A 条 BEAT。',
+      'OECD BEPS 第二支柱 GloBE 规则 —— 按司法辖区有效税率征收 15% 最低税。',
+      '反协定滥用 LOB 条款；MLI 第 7 条主要目的测试（PPT）。',
+    ],
+    suggested_max_tokens: 5000,
+  },
+  {
+    agent_id: 'ipo_transfer_pricing_advisor',
+    task_en: 'Advise on transfer pricing methods (CUP / RPM / Cost-Plus / TNMM / PSM) for each material intercompany flow, design local-file / master-file / CbCR documentation, and align with BEPS Action 13 + the issuer\'s pre-IPO comparability set.',
+    task_zh: '为每条重大公司间交易流推荐转让定价方法（CUP / 再销售价格法 / 成本加成 / TNMM / 利润分割），设计本地文档 / 主体文档 / CbCR，并对齐 BEPS 行动 13 + 发行人 IPO 前可比对象。',
+    focus_en: 'Disclosure: ensure intercompany pricing footnote in S-1 reconciles to the TP study.',
+    focus_zh: '披露：确保 S-1 中关联交易定价附注与转让定价研究一致。',
+    extra_clauses_en: [
+      'IRC §482 (US transfer-pricing rules) and Treas. Reg. §1.482-1 through -9.',
+      'OECD Transfer Pricing Guidelines (2022); BEPS Action 13 three-tier documentation (Local / Master / CbCR).',
+      'IRS Form 5472 — reportable transactions for foreign-owned US disregarded entities and 25%-foreign-owned US corps.',
+    ],
+    extra_clauses_zh: [
+      'IRC 第 482 条（美国转让定价规则）及财政部条例 §1.482-1 至 -9。',
+      'OECD 转让定价指南（2022）；BEPS 行动 13 三层文档（本地 / 主体 / CbCR）。',
+      '美国国税局 Form 5472 —— 外国所有 US 不计实体与 25% 外国控股 US 公司的可报告交易。',
+    ],
+    suggested_max_tokens: 5000,
+  },
+  {
+    agent_id: 'ipo_treaty_analyzer',
+    task_en: 'Analyze applicable double-tax treaties (US-HK absent, US-PRC, US-Singapore, US-Cayman absent, etc.) and compute effective withholding rates for the proposed dividend / interest / royalty / capital-gains paths. Surface treaty-shopping LOB / PPT risks.',
+    task_zh: '分析适用的避免双重征税协定（美 - 港缺位、美 - 中、美 - 新、美 - 开曼缺位等），并计算拟定股息 / 利息 / 特许权使用费 / 资本利得路径的有效预提税率。揭示协定滥用 LOB / PPT 风险。',
+    focus_en: 'Build a treaty-route table mapping each cash flow to (source country WHT → treaty rate → LOB qualification → ultimate residual tax).',
+    focus_zh: '构建协定路径表：将每条现金流映射到（来源地预提税率 → 协定税率 → LOB 资格 → 最终残留税负）。',
+    extra_clauses_en: [
+      'OECD Model Tax Convention; UN Model where applicable.',
+      'MLI (Multilateral Instrument) covered tax agreements and Article 7 PPT.',
+      'IRC §894 — limitation on benefits for treaty claims; Form W-8BEN-E for entity claims.',
+    ],
+    extra_clauses_zh: [
+      'OECD 税收协定范本；适用情形下采用 UN 范本。',
+      'MLI（多边公约）覆盖的税收协定及第 7 条 PPT。',
+      'IRC 第 894 条 —— 协定优惠的限制；实体申报使用 Form W-8BEN-E。',
+    ],
+    suggested_max_tokens: 5000,
+  },
+  {
+    agent_id: 'ipo_sensitivity_analyzer',
+    task_en: 'Build tornado / one-way / two-way sensitivity tables for the valuation across key drivers (revenue growth, terminal margin, WACC, exit multiple, churn). Produce P10 / P50 / P90 envelopes and identify the two highest-impact drivers.',
+    task_zh: '围绕关键价值驱动因素（收入增速、终值利润率、WACC、退出倍数、流失率）构建龙卷风图 / 单变量 / 双变量敏感度表。输出 P10 / P50 / P90 通道并识别影响最大的两个驱动因素。',
+    focus_en: 'Tie the envelope to the prospectus Use-of-Proceeds and roadshow story so the price-range disclosure is internally consistent.',
+    focus_zh: '将估值通道与招股书募集资金用途及路演叙事勾稽，使发行价区间披露在内部一致。',
+    extra_clauses_en: [
+      'No PSLRA safe harbor at S-1 stage — sensitivities shared with investors must avoid being construed as projections.',
+      'Reg G + Item 10(e) — any non-GAAP key driver requires GAAP reconciliation.',
+    ],
+    extra_clauses_zh: [
+      'S-1 阶段无 PSLRA 安全港 —— 与投资者分享的敏感度必须避免被解读为预测。',
+      'Reg G + 第 10(e) 项 —— 任何非 GAAP 关键驱动因素须 GAAP 调节。',
+    ],
+    suggested_max_tokens: 4500,
+  },
+  {
+    agent_id: 'ipo_esg_metric_calculator',
+    task_en: 'Calculate the GHG (Scope 1 / 2 / 3), social, and governance metrics required by the SEC climate-related disclosure rule (where in force / pending) and any voluntary frameworks the issuer adopts (TCFD / ISSB / SASB). Produce the underlying calculation workpapers.',
+    task_zh: '计算 SEC 气候相关披露规则（生效 / 拟议范围内）以及发行人自愿采纳的框架（TCFD / ISSB / SASB）所要求的温室气体排放（范围 1 / 2 / 3）、社会与治理指标。产出支撑性计算底稿。',
+    focus_en: 'Reconcile SEC climate-rule scope (Scope 1+2 mandatory, Scope 3 if material) with state-level rules (e.g., California SB-253 / SB-261) and voluntary EU-CSRD-aligned reporting.',
+    focus_zh: '将 SEC 气候规则范围（范围 1+2 强制，范围 3 重大时强制）与州级规则（如加州 SB-253 / SB-261）以及自愿性 EU-CSRD 对齐报告勾稽。',
+    extra_clauses_en: [
+      'SEC climate-related disclosure rule (status-dependent — note current effectiveness in the output).',
+      'GHG Protocol Corporate Standard for Scope 1 / 2 / 3 boundary and methodology.',
+      'TCFD / ISSB IFRS S2 / SASB — voluntary alignment frameworks.',
+    ],
+    extra_clauses_zh: [
+      'SEC 气候相关披露规则（状态待定 —— 须在产出中注明当前生效情况）。',
+      'GHG Protocol 企业准则 —— 范围 1 / 2 / 3 边界与方法论。',
+      'TCFD / ISSB IFRS S2 / SASB —— 自愿对齐框架。',
+    ],
+    suggested_max_tokens: 5000,
+  },
+];
+
+function make_sec_only_presets(): PresetTemplate[] {
+  const out: PresetTemplate[] = [];
+  for (const s of SEC_ONLY_SPECS) {
+    // SEC fan-out across 5 venues, en + zh
+    out.push(...fan_out_sec(m => ({
+      agent_id: s.agent_id,
+      locale: 'en',
+      task_label_en: s.task_en,
+      task_label_zh: s.task_zh,
+      instruction:
+        `For IPO project {{project_id}} (issuer: {{company_name}}, industry: {{industry}}), ` +
+        `${s.task_en}\n\nListing venue: ${venue_label(m)} (${m}).\n\nFocus: ${s.focus_en}`,
+      jurisdiction_clauses: [
+        ...SEC_GLOBAL_CLAUSES_EN,
+        ...s.extra_clauses_en,
+      ],
+      output_format: STD_OUTPUT_FORMAT_EN,
+      variables: PROJECT_VARS,
+      prospectus_section: s.prospectus_section,
+      suggested_max_tokens: s.suggested_max_tokens ?? 4500,
+    })));
+    out.push(...fan_out_sec(m => ({
+      agent_id: s.agent_id,
+      locale: 'zh',
+      task_label_en: s.task_en,
+      task_label_zh: s.task_zh,
+      instruction:
+        `请为 IPO 项目 {{project_id}}（发行人：{{company_name}}，行业：{{industry}}）` +
+        `${s.task_zh}\n\n上市地：${venue_label_zh(m)}（${m}）。\n\n重点：${s.focus_zh}`,
+      jurisdiction_clauses: [
+        ...SEC_GLOBAL_CLAUSES_ZH,
+        ...s.extra_clauses_zh,
+      ],
+      output_format: STD_OUTPUT_FORMAT_ZH,
+      variables: PROJECT_VARS,
+      prospectus_section: s.prospectus_section,
+      suggested_max_tokens: s.suggested_max_tokens ?? 4500,
+    })));
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// Master registry
 // ---------------------------------------------------------------------------
 
 const ALL_PRESETS: PresetTemplate[] = [
@@ -891,6 +1290,7 @@ const ALL_PRESETS: PresetTemplate[] = [
   ...REGULATOR_QA_PRESETS,
   ...make_valuation_presets(),
   ...STOCK_SIM_PRESETS,
+  ...make_sec_only_presets(),
 ];
 
 // Index: agent_id → target_market → locale → preset
