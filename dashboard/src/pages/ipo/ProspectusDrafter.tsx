@@ -1,13 +1,14 @@
 // file: dashboard/src/pages/ipo/ProspectusDrafter.tsx
 // description: Prospectus Drafter — each section invokes the matching drafting
-//              agent through /api/ipo/agents/:id/run. The request now also
-//              passes target_market + prospectus_section so the backend's
-//              Prospectus Format Standards (PFS) registry injects the correct
-//              jurisdiction-specific format requirements (Reg S-K items, HKEX
-//              App.1A anchors, mandatory disclosure phrases, required
-//              subheadings, word-count floors) into the agent's system prompt
-//              and lints the output for compliance. The result panel renders
-//              both the draft and the PFS compliance report (score, missing
+//              agent through the global runs context (slot per project ×
+//              section). The request passes target_market + prospectus_section
+//              so the backend's Prospectus Format Standards (PFS) registry
+//              injects the correct jurisdiction-specific format requirements
+//              into the agent's system prompt and lints the output for
+//              compliance. Tasks survive page navigation; the slot is locked
+//              while a draft is being generated so the same section cannot be
+//              triggered twice in parallel. The result panel renders both the
+//              draft and the PFS compliance report (score, missing
 //              subheadings, required-element coverage, disclosure coverage,
 //              gaps reported by the model itself).
 
@@ -17,10 +18,11 @@ import { useQuery } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
-import { ArrowLeft, FileText, Loader2, Play, ShieldCheck, AlertTriangle } from 'lucide-react';
+import { ArrowLeft, FileText, Loader2, Play, ShieldCheck, AlertTriangle, X } from 'lucide-react';
 import { useT, useLocale, useMarketLabel } from '@/lib/i18n';
 import type { TranslationKey } from '@/lib/i18n';
-import { ipo_api, type AgentRunResult, type PfsReport, type TargetMarket } from '@/lib/ipo-api';
+import { ipo_api, type PfsReport, type TargetMarket } from '@/lib/ipo-api';
+import { use_slot_run, slot_keys } from '@/lib/runs-context';
 
 interface SectionEntry { code: string; name_key: TranslationKey; ref: string; agent_id: string }
 
@@ -50,8 +52,6 @@ const HKEX_SECTIONS: SectionEntry[] = [
   { code: 'accountants_report',  name_key: 'prosp.hkex.accountants_report',  ref: 'Ch. 4',        agent_id: 'hkex_track_record_validator' },
 ];
 
-interface RunState { loading: boolean; result?: AgentRunResult; error?: string }
-
 // Map UI group → the canonical TargetMarket used by the PFS registry.
 // SEC group: default to NASDAQ_GS (most stringent SEC tier; standards are
 // shared across all SEC venues anyway). HKEX group: default to HKEX_MAIN.
@@ -70,7 +70,6 @@ export function IpoProspectusDrafter() {
   const t = useT();
   const { locale } = useLocale();
   const market_label = useMarketLabel();
-  const [runs, set_runs] = useState<Record<string, RunState>>({});
   const [open, set_open] = useState<string | null>(null);
 
   // Pull the project so we know the user's chosen target_market.
@@ -80,36 +79,6 @@ export function IpoProspectusDrafter() {
     enabled: !!id,
   });
   const project_market = project_data?.project.target_market;
-
-  const run_section = async (group: 'sec' | 'hkex', s: SectionEntry) => {
-    const key = `${group}:${s.code}`;
-    set_runs(r => ({ ...r, [key]: { loading: true } }));
-    set_open(key);
-    try {
-      const target_market = pick_target_market(group, project_market);
-      const section_label = t(s.name_key);
-      const venue_label = market_label(target_market);
-      const prompt = locale === 'zh'
-        ? `请为 IPO 项目 ${id} 起草招股说明书的「${section_label}」章节。\n\n上市地：${venue_label}（${target_market}）\n监管引用：${s.ref}\n\n你必须严格遵守上方「格式标准（强制约束）」中列出的所有要求：必备子节标题、必备要素、强制披露语句、字数要求与引用要求。如果缺少公司具体数据，请用合理示例数据填充并明确标注「[示例]」；不可虚构关键披露事实。\n\n⚠️ Token 预算分配（硬性要求）：\n1. 你的总输出预算约为 12000 token。\n2. 必须为末尾的 \`\`\`json 合规信封预留至少 600 token，信封不可省略。\n3. 如果正文预算紧张，请压缩每条要素的描述长度，但禁止删减必备子节标题或必备要素。\n4. 写完正文后立即输出 \`\`\`json 信封，不要任何客套话。\n\n输出顺序：Markdown 章节正文（按必备子节标题分节）→ 空行 → \`\`\`json 信封 → \`\`\` 结束。`
-        : `Draft the "${section_label}" section of the prospectus for IPO project ${id}.\n\nVenue: ${venue_label} (${target_market})\nRegulatory anchor: ${s.ref}\n\nYou MUST strictly conform to the "Format Standard (binding)" block above: produce every required subheading in order, cover every required element, include the mandatory disclosure language, hit the word-count band, and cite the listed authorities. Where concrete company data is missing, fill with reasonable examples clearly marked "[example]" — do NOT fabricate key disclosure facts.\n\n⚠️ Token budget allocation (hard requirement):\n1. Your total output budget is ~12000 tokens.\n2. You MUST reserve at least 600 tokens at the very end for the \`\`\`json compliance envelope. The envelope is non-optional and is parsed by the PFS linter.\n3. If the body budget is tight, compress per-element prose — but NEVER drop a required subheading or required element.\n4. Immediately after the body, emit the \`\`\`json envelope. No closing pleasantries.\n\nOutput order: Markdown body (under the required subheadings) → blank line → \`\`\`json envelope → closing \`\`\`.`;
-      const { result } = await ipo_api.run_agent(s.agent_id, {
-        prompt,
-        locale,
-        target_market,
-        prospectus_section: s.code,
-        // Long-form sections (risk_factors, mdna, business) need ~6000-25000
-        // words to satisfy the PFS word-count band. 12000 tokens gives the
-        // model headroom for ~7000-8000 words of body PLUS the mandatory JSON
-        // compliance envelope at the end (which the linter parses for score).
-        // The prompt also explicitly reserves >=600 tokens for the envelope so
-        // the model doesn't blow its budget on prose and drop the envelope.
-        max_tokens: 12000,
-      });
-      set_runs(r => ({ ...r, [key]: { loading: false, result } }));
-    } catch (e) {
-      set_runs(r => ({ ...r, [key]: { loading: false, error: (e as Error).message } }));
-    }
-  };
 
   return (
     <div className="p-6 space-y-6 max-w-6xl mx-auto">
@@ -141,100 +110,177 @@ export function IpoProspectusDrafter() {
           title={t('prosp.group.sec')}
           group="sec"
           sections={SEC_SECTIONS}
-          runs={runs}
+          project_id={id || ''}
+          project_market={project_market}
           open={open}
           set_open={set_open}
-          on_run={run_section}
         />
         <SectionGroup
           title={t('prosp.group.hkex')}
           group="hkex"
           sections={HKEX_SECTIONS}
-          runs={runs}
+          project_id={id || ''}
+          project_market={project_market}
           open={open}
           set_open={set_open}
-          on_run={run_section}
         />
       </div>
     </div>
   );
 }
 
-function SectionGroup({
-  title, group, sections, runs, open, set_open, on_run,
-}: {
+interface GroupProps {
   title: string;
   group: 'sec' | 'hkex';
   sections: SectionEntry[];
-  runs: Record<string, RunState>;
+  project_id: string;
+  project_market: TargetMarket | undefined;
   open: string | null;
   set_open: (k: string | null) => void;
-  on_run: (group: 'sec' | 'hkex', s: SectionEntry) => void;
-}) {
-  const t = useT();
+}
+
+function SectionGroup({ title, group, sections, project_id, project_market, open, set_open }: GroupProps) {
   return (
     <Card>
       <CardHeader><CardTitle className="text-lg">{title}</CardTitle></CardHeader>
       <CardContent className="space-y-2">
-        {sections.map(s => {
-          const key = `${group}:${s.code}`;
-          const r = runs[key];
-          const is_open = open === key;
-          const status_label = r?.loading ? t('agents.run.button_running')
-            : r?.result   ? (r.result.mode === 'live' ? t('agents.run.mode_live') : t('agents.run.mode_dry_run'))
-            : r?.error    ? t('agents.run.error_label')
-            : t('prosp.status.not_started');
-          const status_variant = r?.error ? 'destructive' : r?.result?.mode === 'live' ? 'default' : 'outline';
-          return (
-            <div key={s.code} className="rounded border">
-              <div className="flex items-center justify-between p-3">
-                <div className="flex-1 min-w-0">
-                  <div className="font-medium text-sm truncate">{t(s.name_key)}</div>
-                  <div className="text-xs text-muted-foreground">{s.ref} · <code>{s.agent_id}</code></div>
-                </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  {r?.result?.pfs_report && (
-                    <PfsScoreBadge score={r.result.pfs_report.compliance_score} />
-                  )}
-                  <Badge variant={status_variant as 'default' | 'outline' | 'destructive'}>{status_label}</Badge>
-                  <Button size="sm" disabled={r?.loading} onClick={() => on_run(group, s)}>
-                    {r?.loading
-                      ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
-                      : <Play className="h-3.5 w-3.5 mr-1" />}
-                    {t('prosp.btn.draft')}
-                  </Button>
-                  {(r?.result || r?.error) && (
-                    <Button size="sm" variant="ghost" onClick={() => set_open(is_open ? null : key)}>
-                      {is_open ? '−' : '+'}
-                    </Button>
-                  )}
-                </div>
-              </div>
-              {is_open && r?.error && (
-                <div className="px-3 pb-3">
-                  <div className="text-xs rounded border border-destructive/40 bg-destructive/10 p-2 text-destructive font-mono">
-                    {r.error}
-                  </div>
-                </div>
-              )}
-              {is_open && r?.result && (
-                <div className="px-3 pb-3 space-y-2">
-                  <div className="text-xs text-muted-foreground">
-                    {t('agents.run.provider_label')}: <code>{r.result.provider}</code> ·{' '}
-                    {t('agents.run.model_label')}: <code>{r.result.model}</code> · {r.result.ms_elapsed}ms
-                    {r.result.citation_required && <span> · 📚</span>}
-                  </div>
-                  {r.result.pfs_report && <PfsReportPanel report={r.result.pfs_report} />}
-                  <pre className="text-xs whitespace-pre-wrap p-2 rounded border bg-muted/30 max-h-72 overflow-y-auto">
-                    {r.result.output}
-                  </pre>
-                </div>
-              )}
-            </div>
-          );
-        })}
+        {sections.map(s => (
+          <SectionRow
+            key={`${group}:${s.code}`}
+            group={group}
+            section={s}
+            project_id={project_id}
+            project_market={project_market}
+            open={open}
+            set_open={set_open}
+          />
+        ))}
       </CardContent>
     </Card>
+  );
+}
+
+interface RowProps {
+  group: 'sec' | 'hkex';
+  section: SectionEntry;
+  project_id: string;
+  project_market: TargetMarket | undefined;
+  open: string | null;
+  set_open: (k: string | null) => void;
+}
+
+function SectionRow({ group, section, project_id, project_market, open, set_open }: RowProps) {
+  const t = useT();
+  const { locale } = useLocale();
+  const market_label = useMarketLabel();
+
+  // Resolve the venue for this row up front — feeds both the slot-key (so
+  // SEC and HKEX drafts on the same physical agent get separate slots) and
+  // the request body (so the backend PFS registry binds the correct
+  // jurisdiction).
+  const target_market = pick_target_market(group, project_market);
+
+  // Slot-key parity: backend uses `${project_id}::prospectus::${section.code}`
+  // We additionally suffix with the group so the same `code` (e.g. "summary",
+  // "risk_factors", "mdna", "business", "use_of_proceeds") on both SEC and
+  // HKEX tabs gets independent slots.
+  const slot_key = project_id
+    ? `${slot_keys.prospectus(project_id, section.code)}::${group}`
+    : '';
+
+  const open_key = `${group}:${section.code}`;
+  const is_open = open === open_key;
+  const section_label = t(section.name_key);
+  const venue_label = market_label(target_market);
+
+  const run = use_slot_run({
+    agent_id:   section.agent_id,
+    slot_key,
+    project_id,
+    module:     'prospectus',
+    label:      `${group.toUpperCase()} · ${section_label}`,
+  });
+
+  const start = async () => {
+    if (!project_id) return;
+    const prompt = locale === 'zh'
+      ? `请为 IPO 项目 ${project_id} 起草招股说明书的「${section_label}」章节。\n\n上市地：${venue_label}（${target_market}）\n监管引用：${section.ref}\n\n你必须严格遵守上方「格式标准（强制约束）」中列出的所有要求：必备子节标题、必备要素、强制披露语句、字数要求与引用要求。如果缺少公司具体数据，请用合理示例数据填充并明确标注「[示例]」；不可虚构关键披露事实。\n\n⚠️ Token 预算分配（硬性要求）：\n1. 你的总输出预算约为 12000 token。\n2. 必须为末尾的 \`\`\`json 合规信封预留至少 600 token，信封不可省略。\n3. 如果正文预算紧张，请压缩每条要素的描述长度，但禁止删减必备子节标题或必备要素。\n4. 写完正文后立即输出 \`\`\`json 信封，不要任何客套话。\n\n输出顺序：Markdown 章节正文（按必备子节标题分节）→ 空行 → \`\`\`json 信封 → \`\`\` 结束。`
+      : `Draft the "${section_label}" section of the prospectus for IPO project ${project_id}.\n\nVenue: ${venue_label} (${target_market})\nRegulatory anchor: ${section.ref}\n\nYou MUST strictly conform to the "Format Standard (binding)" block above: produce every required subheading in order, cover every required element, include the mandatory disclosure language, hit the word-count band, and cite the listed authorities. Where concrete company data is missing, fill with reasonable examples clearly marked "[example]" — do NOT fabricate key disclosure facts.\n\n⚠️ Token budget allocation (hard requirement):\n1. Your total output budget is ~12000 tokens.\n2. You MUST reserve at least 600 tokens at the very end for the \`\`\`json compliance envelope. The envelope is non-optional and is parsed by the PFS linter.\n3. If the body budget is tight, compress per-element prose — but NEVER drop a required subheading or required element.\n4. Immediately after the body, emit the \`\`\`json envelope. No closing pleasantries.\n\nOutput order: Markdown body (under the required subheadings) → blank line → \`\`\`json envelope → closing \`\`\`.`;
+    await run.start({
+      prompt,
+      locale,
+      target_market,
+      prospectus_section: section.code,
+      // Long-form sections (risk_factors, mdna, business) need ~6000-25000
+      // words to satisfy the PFS word-count band. 12000 tokens gives the
+      // model headroom for ~7000-8000 words of body PLUS the mandatory JSON
+      // compliance envelope at the end (which the linter parses for score).
+      max_tokens: 12000,
+    });
+    set_open(open_key);
+  };
+
+  const status_label = run.is_running    ? `${t('agents.run.button_running')} · ${run.elapsed_s}s`
+    : run.is_completed && run.result?.mode === 'live'    ? t('agents.run.mode_live')
+    : run.is_completed                    ? t('agents.run.mode_dry_run')
+    : run.is_failed                       ? t('agents.run.error_label')
+    : run.is_cancelled                    ? '已取消'
+    : t('prosp.status.not_started');
+  const status_variant = run.is_failed ? 'destructive'
+    : run.is_completed && run.result?.mode === 'live' ? 'default'
+    : 'outline';
+
+  return (
+    <div className="rounded border">
+      <div className="flex items-center justify-between p-3">
+        <div className="flex-1 min-w-0">
+          <div className="font-medium text-sm truncate">{section_label}</div>
+          <div className="text-xs text-muted-foreground">{section.ref} · <code>{section.agent_id}</code></div>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          {run.result?.pfs_report && (
+            <PfsScoreBadge score={run.result.pfs_report.compliance_score} />
+          )}
+          <Badge variant={status_variant as 'default' | 'outline' | 'destructive'}>{status_label}</Badge>
+          <Button size="sm" disabled={run.is_running || !project_id} onClick={start}>
+            {run.is_running
+              ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
+              : <Play className="h-3.5 w-3.5 mr-1" />}
+            {run.is_running ? `${run.elapsed_s}s` : t('prosp.btn.draft')}
+          </Button>
+          {run.is_running && (
+            <Button size="sm" variant="ghost" onClick={() => { void run.cancel(); }}>
+              <X className="h-3.5 w-3.5" />
+            </Button>
+          )}
+          {(run.is_completed || run.is_failed) && (
+            <Button size="sm" variant="ghost" onClick={() => set_open(is_open ? null : open_key)}>
+              {is_open ? '−' : '+'}
+            </Button>
+          )}
+        </div>
+      </div>
+      {is_open && run.is_failed && run.current?.error?.message && (
+        <div className="px-3 pb-3">
+          <div className="text-xs rounded border border-destructive/40 bg-destructive/10 p-2 text-destructive font-mono">
+            {run.current.error.message}
+          </div>
+        </div>
+      )}
+      {is_open && run.is_completed && run.result && (
+        <div className="px-3 pb-3 space-y-2">
+          <div className="text-xs text-muted-foreground">
+            {t('agents.run.provider_label')}: <code>{run.result.provider}</code> ·{' '}
+            {t('agents.run.model_label')}: <code>{run.result.model}</code> · {run.result.ms_elapsed}ms
+            {run.result.citation_required && <span> · 📚</span>}
+          </div>
+          {run.result.pfs_report && <PfsReportPanel report={run.result.pfs_report} />}
+          <pre className="text-xs whitespace-pre-wrap p-2 rounded border bg-muted/30 max-h-72 overflow-y-auto">
+            {run.result.output}
+          </pre>
+        </div>
+      )}
+    </div>
   );
 }
 

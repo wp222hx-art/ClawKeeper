@@ -291,6 +291,47 @@ export interface AgentRunResult {
 }
 
 // ---------------------------------------------------------------------------
+// Agent run scheduler types — non-blocking run model
+// ---------------------------------------------------------------------------
+
+export type AgentRunStatus = 'running' | 'completed' | 'failed' | 'cancelled';
+
+/** Wire format returned by GET /api/ipo/agents/runs/:id and friends. Matches
+ *  the backend `to_snapshot()` shape in src/ipo/orchestration/agent_run_registry.ts. */
+export interface AgentRunSnapshot {
+  run_id: string;
+  slot_key: string;
+  agent_id: string;
+  project_id?: string;
+  module?: string;
+  label?: string;
+  status: AgentRunStatus;
+  started_at: number;
+  finished_at?: number;
+  ms_elapsed: number;
+  /** First 200 chars of the original prompt — for the active-runs indicator. */
+  prompt_preview: string;
+  result?: AgentRunResult;
+  error?: { message: string; status?: number; provider?: string };
+}
+
+/** Body for POST /api/ipo/agents/:id/run with the slot/scheduler hints. */
+export interface StartRunRequest extends AgentRunRequest {
+  /** "{project}::{module}::{detail}" — the unit of mutual exclusion. */
+  slot_key?: string;
+  /** Project this run belongs to (drives per-project cross-page listings). */
+  project_id?: string;
+  /** Logical module: 'financial' | 'prospectus' | 'regulator_qa' | 'valuation' | 'stock_sim' */
+  module?: string;
+  /** Short label shown in the global "running tasks" indicator. */
+  label?: string;
+}
+
+export type StartRunResponse =
+  | { ok: true;  status: 'started';   run: AgentRunSnapshot }
+  | { ok: false; status: 'duplicate'; message: string; run: AgentRunSnapshot };
+
+// ---------------------------------------------------------------------------
 // API surface
 // ---------------------------------------------------------------------------
 export const ipo_api = {
@@ -374,11 +415,85 @@ export const ipo_api = {
   get_agent: (id: string) => fetch_json<{ agent: IpoAgentCatalogItem }>(`/api/ipo/agents/${id}`),
   get_agent_bundle: (id: string) => fetch_json<AgentSkillBundle>(`/api/ipo/agents/${id}/bundle`),
   get_skill_coverage: () => fetch_json<SkillCoverageReport>('/api/ipo/agents/coverage'),
+  /**
+   * @deprecated Synchronous path — kept for legacy callers. Prefer
+   * `start_run` + polling via the global RunsContext so generations survive
+   * page navigation and so the slot-key mutex prevents accidental duplicates.
+   */
   run_agent: (id: string, body: AgentRunRequest) =>
-    fetch_json<{ ok: true; result: AgentRunResult }>(`/api/ipo/agents/${id}/run`, {
+    fetch_json<{ ok: true; result: AgentRunResult }>(`/api/ipo/agents/${id}/run-sync`, {
       method: 'POST',
       body: JSON.stringify(body),
     }),
+
+  // -------------------------------------------------------------------------
+  // Non-blocking run scheduler — see src/ipo/orchestration/agent_run_registry.ts
+  // -------------------------------------------------------------------------
+
+  /**
+   * Register a run. Returns immediately with a snapshot whose status is
+   * 'started' (new task) or 'duplicate' (slot already busy — the existing
+   * run is returned). Both cases are surfaced as resolved Promises; the
+   * 409 Conflict response is treated as a *non-error* outcome by the client.
+   */
+  start_run: async (id: string, body: StartRunRequest): Promise<StartRunResponse> => {
+    const resp = await fetch(`${BASE_URL}/api/ipo/agents/${id}/run`, {
+      method: 'POST',
+      headers: get_headers(),
+      body: JSON.stringify(body),
+    });
+    if (resp.status === 201 || resp.status === 409) {
+      return resp.json() as Promise<StartRunResponse>;
+    }
+    const err = await resp.json().catch(() => ({ error: 'Request failed' }));
+    throw new Error(err.error || err.message || `HTTP ${resp.status}`);
+  },
+
+  /** Get a single run snapshot by run_id. Returns null if not found. */
+  get_run: async (run_id: string): Promise<AgentRunSnapshot | null> => {
+    const resp = await fetch(`${BASE_URL}/api/ipo/agents/runs/${run_id}`, {
+      headers: get_headers(),
+    });
+    if (resp.status === 404) return null;
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const j = (await resp.json()) as { run: AgentRunSnapshot };
+    return j.run;
+  },
+
+  /** List runs (filterable). Used by the global poller. */
+  list_runs: (opts: { project_id?: string; module?: string; active_only?: boolean; limit?: number } = {}) => {
+    const q = new URLSearchParams();
+    if (opts.project_id) q.set('project_id', opts.project_id);
+    if (opts.module) q.set('module', opts.module);
+    if (opts.active_only) q.set('active', 'true');
+    if (opts.limit) q.set('limit', String(opts.limit));
+    return fetch_json<{ count: number; runs: AgentRunSnapshot[] }>(
+      `/api/ipo/agents/runs?${q.toString()}`,
+    );
+  },
+
+  /** Mark a run as cancelled. Slot is freed immediately. */
+  cancel_run: async (run_id: string): Promise<AgentRunSnapshot | null> => {
+    const resp = await fetch(`${BASE_URL}/api/ipo/agents/runs/${run_id}/cancel`, {
+      method: 'POST',
+      headers: get_headers(),
+    });
+    if (resp.status === 404) return null;
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const j = (await resp.json()) as { ok: true; run: AgentRunSnapshot };
+    return j.run;
+  },
+
+  /** Peek at the current run occupying a slot (without creating one). */
+  get_slot: async (agent_id: string, slot_key: string): Promise<AgentRunSnapshot | null> => {
+    const q = new URLSearchParams({ slot_key });
+    const resp = await fetch(`${BASE_URL}/api/ipo/agents/${agent_id}/slot?${q.toString()}`, {
+      headers: get_headers(),
+    });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const j = (await resp.json()) as { run: AgentRunSnapshot | null };
+    return j.run;
+  },
 };
 
 // ---------------------------------------------------------------------------
