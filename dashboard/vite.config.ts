@@ -12,11 +12,14 @@ export default defineConfig({
   server: {
     port: 3000,
     host: true,
-      proxy: {
-        '/api': {
-          target: 'http://localhost:9100',
-          changeOrigin: true,
-        },
+    // Allow sandbox/public hostnames so the dashboard works behind the
+    // GetServiceUrl proxy. '.sandbox.novita.ai' is a wildcard suffix match.
+    allowedHosts: ['.sandbox.novita.ai', 'localhost', '127.0.0.1'],
+    proxy: {
+      '/api': {
+        target: 'http://localhost:9100',
+        changeOrigin: true,
       },
+    },
   },
 });

@@ -1,7 +1,7 @@
 {
-  "name": "clawkeeper",
-  "version": "0.1.0",
-  "description": "Autonomous AI Bookkeeping for SMBs",
+  "name": "ipopilot",
+  "version": "0.2.0",
+  "description": "IPOPilot — AI Co-Pilot for Global IPO Readiness (built on ClawKeeper agent runtime)",
   "type": "module",
   "main": "src/index.ts",
   "module": "src/index.ts",
@@ -20,6 +20,11 @@
     "db:rbac": "psql $DATABASE_URL -f db/rbac.sql",
     "db:seed": "psql $DATABASE_URL -f db/seed.sql",
     "db:setup": "bun run db:migrate && bun run db:rls && bun run db:rbac && bun run db:seed",
+    "db:ipo-schema": "psql $DATABASE_URL -f db/ipo_schema.sql",
+    "db:ipo-rls": "psql $DATABASE_URL -f db/ipo_rls.sql",
+    "db:ipo-seed": "psql $DATABASE_URL -f db/ipo_seed.sql",
+    "db:ipo-setup": "bun run db:ipo-schema && bun run db:ipo-rls && bun run db:ipo-seed",
+    "db:full-setup": "bun run db:setup && bun run db:ipo-setup",
     "dashboard:dev": "cd dashboard && bun run dev",
     "dashboard:build": "cd dashboard && bun run build",
     "demo:download": "cd src/demo/download && pip install -r requirements.txt && python download_datasets.py",
@@ -46,13 +51,16 @@
     "zod": "^3.22.0"
   },
   "devDependencies": {
-    "@types/bun": "latest",
-    "@types/uuid": "^9.0.0",
     "@types/bcryptjs": "^2.4.6",
+    "@types/bun": "latest",
     "@types/jsonwebtoken": "^9.0.5",
+    "@types/uuid": "^9.0.0",
+    "@typescript-eslint/eslint-plugin": "^8.59.2",
+    "@typescript-eslint/parser": "^8.59.2",
+    "eslint": "^8.56.0",
     "tsx": "^4.21.0",
     "typescript": "^5.3.0",
-    "eslint": "^8.56.0"
+    "typescript-eslint": "^8.59.2"
   },
   "keywords": [
     "ai",

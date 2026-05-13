@@ -1,57 +1,46 @@
 import { Link, useLocation } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { 
-  LayoutDashboard, 
-  FileText, 
-  BarChart3, 
-  GitCompare, 
+import {
   Settings,
   LogOut,
-  Users,
-  Truck,
   Bot,
   Zap,
-  Terminal,
-  Sparkles,
+  Briefcase,
+  BookOpen,
+  Plug,
+  HelpCircle,
 } from 'lucide-react';
 import { use_auth_store } from '@/stores/auth-store';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/api';
+import { useT, type TranslationKey } from '@/lib/i18n';
+import { LanguageSwitcher } from '@/components/LanguageSwitcher';
 
-const nav_sections = [
+interface NavItem {
+  name_key: TranslationKey;
+  path: string;
+  icon: typeof Briefcase;
+}
+interface NavSection {
+  title_key: TranslationKey;
+  items: NavItem[];
+}
+
+const nav_sections: NavSection[] = [
   {
-    title: 'Overview',
+    title_key: 'nav.section.ipopilot',
     items: [
-      { name: 'Dashboard', path: '/dashboard', icon: LayoutDashboard },
+      { name_key: 'nav.projects',  path: '/ipo/projects', icon: Briefcase },
+      { name_key: 'nav.knowledge', path: '/ipo/knowledge', icon: BookOpen },
+      { name_key: 'nav.agents',    path: '/ipo/agents',  icon: Bot },
     ],
   },
   {
-    title: 'Finance',
+    title_key: 'nav.section.system',
     items: [
-      { name: 'Invoices', path: '/invoices', icon: FileText },
-      { name: 'Reconciliation', path: '/reconciliation', icon: GitCompare },
-      { name: 'Reports', path: '/reports', icon: BarChart3 },
-    ],
-  },
-  {
-    title: 'Contacts',
-    items: [
-      { name: 'Customers', path: '/customers', icon: Users },
-      { name: 'Vendors', path: '/vendors', icon: Truck },
-    ],
-  },
-  {
-    title: 'AI Agents',
-    items: [
-      { name: 'Command Center', path: '/agents/command-center', icon: Sparkles },
-      { name: 'Agent Console', path: '/agents/console', icon: Terminal },
-      { name: 'All Agents', path: '/agents', icon: Bot },
-    ],
-  },
-  {
-    title: 'System',
-    items: [
-      { name: 'Settings', path: '/settings', icon: Settings },
+      { name_key: 'nav.ai_providers', path: '/settings/ai-providers', icon: Plug },
+      { name_key: 'nav.help',         path: '/help',                  icon: HelpCircle },
+      { name_key: 'nav.settings',     path: '/settings',              icon: Settings },
     ],
   },
 ];
@@ -59,6 +48,7 @@ const nav_sections = [
 export function Sidebar() {
   const location = useLocation();
   const { user, logout } = use_auth_store();
+  const t = useT();
 
   // Fetch real agent status (shared with other components)
   const { data: agent_data } = useQuery<any>({
@@ -80,8 +70,8 @@ export function Sidebar() {
             <span className="text-primary-foreground font-bold text-lg">🔐</span>
           </div>
           <div>
-            <h1 className="text-xl font-bold">ClawKeeper</h1>
-            <p className="text-xs text-muted-foreground">AI Bookkeeping</p>
+            <h1 className="text-xl font-bold">{t('brand.name')}</h1>
+            <p className="text-xs text-muted-foreground">{t('brand.tagline')}</p>
           </div>
         </div>
       </div>
@@ -112,9 +102,9 @@ export function Sidebar() {
       {/* Navigation */}
       <nav className="flex-1 p-4 space-y-6 overflow-y-auto">
         {nav_sections.map((section) => (
-          <div key={section.title}>
+          <div key={section.title_key}>
             <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 px-3">
-              {section.title}
+              {t(section.title_key)}
             </p>
             <div className="space-y-1">
               {section.items.map((item) => {
@@ -133,7 +123,7 @@ export function Sidebar() {
                     )}
                   >
                     <Icon className="h-5 w-5" />
-                    <span className="font-medium">{item.name}</span>
+                    <span className="font-medium">{t(item.name_key)}</span>
                   </Link>
                 );
               })}
@@ -141,6 +131,11 @@ export function Sidebar() {
           </div>
         ))}
       </nav>
+
+      {/* Language switcher */}
+      <div className="px-4 py-2 border-t flex justify-center">
+        <LanguageSwitcher />
+      </div>
 
       {/* User Info */}
       <div className="p-4 border-t bg-muted/30">

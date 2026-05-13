@@ -1,6 +1,9 @@
-// API client for ClawKeeper dashboard
+// API client for IPOPilot dashboard
 
-const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:9100';
+// In dev (vite), use a relative base so requests go through the vite proxy.
+// The browser cannot reach `http://localhost:9100` directly when the dashboard
+// is served from a sandbox/public URL.
+const BASE_URL = import.meta.env.VITE_API_URL || '';
 
 class ApiClient {
   private get_headers(): HeadersInit {

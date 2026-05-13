@@ -1,6 +1,6 @@
 # UI Components
 
-This directory contains Shadcn UI components for the ClawKeeper dashboard.
+This directory contains Shadcn UI components for the IPOPilot dashboard.
 
 ## Currently Used Components
 

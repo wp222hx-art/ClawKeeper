@@ -19,6 +19,13 @@ import { create_activity_routes } from './routes/activity';
 import { create_vendor_routes } from './routes/vendors';
 import { create_customer_routes } from './routes/customers';
 import { create_metrics_routes } from './routes/metrics';
+import { create_ipo_project_routes } from './routes/ipo_projects';
+import { create_ipo_signoff_routes } from './routes/ipo_signoffs';
+import { create_ipo_regulation_routes } from './routes/ipo_regulations';
+import { create_ipo_provider_routes } from './routes/ipo_providers';
+import { create_ipo_agent_routes } from './routes/ipo_agents';
+import { create_ipo_legal_routes } from './routes/ipo_legal';
+import { llm_provider_registry } from '../ipo/llm/registry';
 import type { AppEnv } from '../types/hono';
 
 // Database connection
@@ -26,6 +33,10 @@ const sql = postgres(process.env.DATABASE_URL!, {
   max: 10,
   idle_timeout: 20,
 });
+
+// Re-export so other modules (e.g. boot rehydration in src/index.ts) can
+// share the same pool instead of opening a second one.
+export { sql };
 
 // Create Hono app with typed environment
 const app = new Hono<AppEnv>();
@@ -116,6 +127,14 @@ app.route('/api/activity', create_activity_routes(sql));
 app.route('/api/vendors', create_vendor_routes(sql));
 app.route('/api/customers', create_customer_routes(sql));
 app.route('/api/metrics', create_metrics_routes(sql));
+
+// IPOPilot routes
+app.route('/api/ipo/projects', create_ipo_project_routes(sql));
+app.route('/api/ipo/signoffs', create_ipo_signoff_routes(sql));
+app.route('/api/ipo/regulations', create_ipo_regulation_routes(sql));
+app.route('/api/ipo/providers', create_ipo_provider_routes(sql));
+app.route('/api/ipo/agents', create_ipo_agent_routes(sql));
+app.route('/api/ipo/legal', create_ipo_legal_routes(sql));
 
 // WebSocket endpoint (NOT IMPLEMENTED)
 app.get('/ws', (c) => {
